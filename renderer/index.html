@@ -1,0 +1,27 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!-- v0.26.5: added 'unsafe-eval' to script-src so the local
+         background-removal engine works. @imgly/background-removal's
+         ONNX Runtime dynamically generates code (new Function / eval)
+         for one of its WASM backends. 'wasm-unsafe-eval' alone covers
+         WebAssembly.compile but NOT the JS code generation that ONNX
+         does at runtime. Symptom without this: "Background removal
+         failed: Refused to evaluate a string as JavaScript because
+         'unsafe-eval' is not an allowed source of script".
+
+         Safety: renderer runs with contextIsolation: true and
+         nodeIntegration: false (sandboxed from Node). 'unsafe-eval'
+         only lets the renderer's own JS use eval / new Function on
+         its OWN scripts; the script-src origin allowlist still gates
+         WHERE scripts can come from ('self' + blob: for the worker). -->
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' app-image: data: blob:; style-src 'self' 'unsafe-inline'; script-src 'self' 'wasm-unsafe-eval' 'unsafe-eval' blob:; worker-src 'self' blob:; connect-src 'self' ws: http://localhost:* https://staticimgly.com https://api.remove.bg app-image: data: blob:;" />
+    <title>Image Studio KH</title>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/main.jsx"></script>
+  </body>
+</html>
