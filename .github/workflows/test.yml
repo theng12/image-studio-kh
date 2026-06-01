@@ -1,0 +1,48 @@
+# CI test runner for Image Studio KH.
+#
+# Runs on every push to main and on every pull request targeting main.
+# Catches a broken commit before it lands — `npm test` covers the
+# main-process modules (DB layer, IPC validators, build hygiene scans).
+# Fast: under a minute on GitHub's macos-latest runner; no native
+# rebuild required since tests don't import sharp/better-sqlite3 by way
+# of any code path that actually opens a DB or processes an image.
+#
+# Why macos-latest (not ubuntu): the project is Electron + sharp +
+# better-sqlite3. Even though the tests don't trigger the native deps,
+# `npm install` does (postinstall: electron-builder install-app-deps),
+# and that step is most reliable on the same OS family the app ships
+# for. Running CI on macOS also keeps the runtime closest to the
+# developer Macs.
+
+name: test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: macos-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          # Cache npm so reinstalls between runs are quick — saves
+          # ~30s on warm runs vs cold.
+          cache: 'npm'
+
+      - name: Install dependencies
+        # `npm ci` enforces lockfile fidelity (won't silently upgrade
+        # transitive deps) — exactly the right mode for CI vs `npm
+        # install` which mutates the lockfile.
+        run: npm ci
+
+      - name: Run tests
+        run: npm test

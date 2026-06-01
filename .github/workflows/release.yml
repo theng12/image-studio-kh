@@ -1,0 +1,80 @@
+# Build the dual-arch DMG pair on every version tag and attach them
+# to a GitHub Release.
+#
+# Trigger: pushing a tag like v0.49.41 (matches v*.*.*).
+#
+# The build runs on macos-latest (Apple Silicon runner). `npm run dist`
+# already does the dual-arch build via electron-builder's
+# `arch: ["arm64", "x64"]` in package.json, and the predist hook
+# (`npm run install:sharp-cross`) installs the cross-arch sharp /
+# @img/sharp-libvips packages so the x64 DMG carries x64 native deps
+# even though the host is arm64. Same flow we run locally; no special
+# CI-only steps needed.
+#
+# Unsigned: the project ships without a Developer ID identity (see
+# package.json `mac.identity: null`). DMGs work fine — users get a
+# "downloaded from the internet" warning the first time and right-
+# click → Open. If we add signing later, just drop the cert + key as
+# encrypted GitHub secrets and add a `CSC_*` env var here.
+
+name: release
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+
+# Need write perms to create the release.
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: macos-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run tests (gate the release on green)
+        # If tests fail, no DMG. Keeps a broken tag from publishing a
+        # broken release. Same `npm test` the test workflow runs;
+        # duplicating here on purpose so this workflow is self-
+        # contained (no cross-workflow dependency to misconfigure).
+        run: npm test
+
+      - name: Build DMGs
+        # `npm run dist` runs the predist hook (webclient bundle +
+        # cross-arch sharp install) then `vite build && electron-
+        # builder`. electron-builder emits both DMGs into dist/.
+        run: npm run dist
+
+      - name: List artifacts (for log visibility)
+        run: ls -lh dist/*.dmg
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          # Release name = tag name. The release body can be filled
+          # in afterward via the GitHub UI (or auto-populated from
+          # the WhatsNewModal entry — future improvement).
+          name: ${{ github.ref_name }}
+          # The two DMGs are the only assets users need.
+          files: |
+            dist/Image Studio KH-*-arm64.dmg
+            dist/Image Studio KH-*-x64.dmg
+          # Keep the release draft-OFF: as soon as the tag is pushed
+          # and the build passes, the release goes live with the
+          # DMGs attached. Flip this to `true` if you'd rather review
+          # the release notes manually before publishing.
+          draft: false
+          prerelease: false
