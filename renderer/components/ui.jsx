@@ -87,6 +87,9 @@ export function Modal({
   const cls = ['modal'];
   if (wide) cls.push('modal--wide');
   if (size === 'xl') cls.push('modal--xl');
+  // v0.43.0: 'xxl' fills ~92% of the viewport so wide content (e.g. the
+  // Prompt Library's two-column rows) doesn't get squeezed into a narrow box.
+  if (size === 'xxl') cls.push('modal--xxl');
 
   return (
     <div className="modal-backdrop" onMouseDown={handleBackdropClick}>

@@ -3,6 +3,41 @@
 
 import { DEFAULT_FILTERS, DEFAULT_SORT, loadProductSort, saveProductSort } from './productsDefaults.js';
 
+/* ─── v0.49.38: client-mode search race-condition guards ──────────
+ *
+ * Each keystroke in the Library search bar fires `refreshProducts()`,
+ * which fires `window.api.products.list(companyId, filters)`. On the
+ * server / standalone, the IPC hits a local SQLite query and returns
+ * in ~1 ms, so a burst of keystrokes resolves in order. On a client,
+ * the IPC goes over HTTP to the server Mac — and HTTP responses are
+ * NOT guaranteed to arrive in send order. Typing "2213" used to fire
+ * four parallel IPCs ("2", "22", "221", "2213"); whichever response
+ * landed LAST won, regardless of which query it answered. So a user
+ * would type a search, see the correct 4 rows for a moment, then watch
+ * the list grow back to everything as the older partial-query responses
+ * trickled in and overwrote the good answer.
+ *
+ * Two-part fix:
+ *
+ *   1. `searchDebounceTimer` — debounce setProductSearch so typing
+ *      "2213" fires ONE IPC after the user stops, not four. 200 ms is
+ *      the sweet spot: feels instant, coalesces normal typing speed.
+ *
+ *   2. `refreshSeq` / `refreshAllSeq` — sequence counters bumped on
+ *      every call. When a response lands, only commit to the store if
+ *      the captured sequence is still the LATEST. Older responses are
+ *      discarded. Belt-and-braces — covers cases where multiple
+ *      refreshes overlap for reasons other than typing (a remote
+ *      catalog:changed event arriving while a user-triggered refresh
+ *      is in flight, etc.).
+ *
+ * Module-level vars so the guards survive hot-reload and any future
+ * store-slice re-creation. Persisted across React renders by design.
+ */
+let searchDebounceTimer = null;
+let refreshSeq = 0;
+let refreshAllSeq = 0;
+
 export function createProductsSlice(set, get) {
   return {
     // — Product data
@@ -35,7 +70,18 @@ export function createProductsSlice(set, get) {
 
     setProductSearch(search) {
       set((s) => ({ productFilters: { ...s.productFilters, search }, page: 0 }));
-      get().refreshProducts();
+      // v0.49.38: debounced refresh. The state above lands instantly
+      // so the controlled <input> stays responsive; the IPC fires
+      // 200 ms after the LAST keystroke so typing "2213" is one DB
+      // query, not four. Without this, on client mode the four
+      // parallel responses could land out of order and the last to
+      // arrive (often the older, broader query) would overwrite the
+      // user's intended search result.
+      if (searchDebounceTimer) clearTimeout(searchDebounceTimer);
+      searchDebounceTimer = setTimeout(() => {
+        searchDebounceTimer = null;
+        get().refreshProducts();
+      }, 200);
     },
     toggleBrandFilter(value) {
       // value can be a brand id or null (for unassigned).
@@ -127,6 +173,13 @@ export function createProductsSlice(set, get) {
         return;
       }
       set({ productsLoading: true });
+      // v0.49.38: capture a sequence number BEFORE the IPC fires.
+      // The post-IPC code only commits to the store if no newer
+      // refreshProducts() call has started in the meantime. This
+      // prevents the client-mode race where an older (broader) search
+      // response arrives after a newer (narrower) one and overwrites
+      // it. See the module header for the full failure mode.
+      const seq = ++refreshSeq;
       try {
         const filters = get().productFilters;
         const filtersAreDefault =
@@ -138,6 +191,12 @@ export function createProductsSlice(set, get) {
           filters.hasImages == null;
 
         const list = await window.api.products.list(companyId, filters);
+        // Stale response — a newer refreshProducts() call has been
+        // made since we sent ours. Drop this result silently so it
+        // can't overwrite the newer query's products. The newer call
+        // is responsible for clearing `productsLoading` when it
+        // resolves; we leave the flag alone here.
+        if (seq !== refreshSeq) return;
         // v0.11.3: keep `allProducts` in sync from the same call when no
         // filters are active (saves a redundant IPC roundtrip on every
         // keystroke in the Library search). When filters ARE active, the
@@ -153,7 +212,9 @@ export function createProductsSlice(set, get) {
         const maxPage = Math.max(0, Math.ceil(list.length / pageSize) - 1);
         if (page > maxPage) set({ page: maxPage });
       } catch (err) {
-        set({ productsLoading: false });
+        // Only clear the loading flag if we're still the latest call —
+        // otherwise the newer call will handle that.
+        if (seq === refreshSeq) set({ productsLoading: false });
         get().addToast(err.message, 'error');
       }
     },
@@ -170,8 +231,13 @@ export function createProductsSlice(set, get) {
       if (!window.api) return;
       const companyId = get().activeCompanyId;
       if (!companyId) { set({ allProducts: [] }); return; }
+      // v0.49.38: same sequence guard pattern as refreshProducts —
+      // discard stale responses so out-of-order arrivals on a slow
+      // client link can't overwrite a newer fetch.
+      const seq = ++refreshAllSeq;
       try {
         const list = await window.api.products.list(companyId, {});
+        if (seq !== refreshAllSeq) return;
         set({ allProducts: list });
       } catch (err) {
         get().addToast(err.message, 'error');

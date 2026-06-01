@@ -569,7 +569,7 @@ function runMigrations(database) {
       id TEXT PRIMARY KEY,
       name TEXT NOT NULL,
       token TEXT NOT NULL UNIQUE,
-      role TEXT NOT NULL DEFAULT 'editor',  -- 'admin' | 'editor'
+      role TEXT NOT NULL DEFAULT 'editor',  -- v0.45.0: 'admin' | 'editor' | 'photographer' | 'viewer'
       created_at INTEGER NOT NULL,
       last_seen_at INTEGER
     );

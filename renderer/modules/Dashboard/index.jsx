@@ -24,6 +24,8 @@ export function Dashboard() {
   const activeCompanyId = useAppStore((s) => s.activeCompanyId);
   const companies = useAppStore((s) => s.companies);
   const refreshDashboard = useAppStore((s) => s.refreshDashboard);
+  const completeness = useAppStore((s) => s.dashboardCompleteness);
+  const setHasImagesFilter = useAppStore((s) => s.setHasImagesFilter);
   const setActiveModule = useAppStore((s) => s.setActiveModule);
   const openProductInWorkspace = useAppStore((s) => s.openProductInWorkspace);
   const donateDismissed = useAppStore((s) => s.donateBannerDismissed);
@@ -75,6 +77,33 @@ export function Dashboard() {
         <StatCard label="Images"    value={s.images}  hint={`${s.processed} processed`} />
         <StatCard label="Processed" value={s.processed} hint={`of ${s.images}`} tone={s.images > 0 && s.processed === s.images ? 'emerald' : null} />
       </div>
+
+      {/* v0.35.0: catalog completeness — what still needs work. The
+          "no images" chip jumps to the Library filtered to those products;
+          the others are at-a-glance counts (no matching filter yet). */}
+      {completeness && completeness.total > 0 ? (
+        (completeness.missingImages + completeness.missingBarcode + completeness.missingPrice + completeness.notExported) > 0 ? (
+          <section className="dash-attention">
+            <h2 className="dash-attention__title">Needs attention</h2>
+            <div className="dash-attention__row">
+              <button
+                type="button"
+                className="dash-attention__chip"
+                disabled={completeness.missingImages === 0}
+                onClick={() => { setHasImagesFilter('without'); setActiveModule('library'); }}
+                title={completeness.missingImages > 0 ? 'Show the products with no images' : 'Every product has at least one image'}
+              ><strong>{completeness.missingImages}</strong> no image{completeness.missingImages === 1 ? '' : 's'}</button>
+              <span className="dash-attention__chip is-static"><strong>{completeness.missingBarcode}</strong> no barcode</span>
+              <span className="dash-attention__chip is-static"><strong>{completeness.missingPrice}</strong> no price</span>
+              <span className="dash-attention__chip is-static"><strong>{completeness.notExported}</strong> not exported</span>
+            </div>
+          </section>
+        ) : (
+          <section className="dash-attention dash-attention--ok">
+            ✓ All {completeness.total} products have an image, barcode, price, and have been exported.
+          </section>
+        )
+      ) : null}
 
       <div className="dash-grid">
         <section className="dash-panel">

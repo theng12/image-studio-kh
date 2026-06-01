@@ -6,6 +6,8 @@ const FORMATS = [
   { value: 'jpg',  label: 'JPG' },
   { value: 'png',  label: 'PNG' },
   { value: 'webp', label: 'WEBP' },
+  // v0.35.0: AVIF — ~50% smaller than JPEG at similar quality, keeps alpha.
+  { value: 'avif', label: 'AVIF (smallest)' },
 ];
 
 const TOKENS = [
@@ -158,7 +160,7 @@ export function ProfileForm({ open, profile, onClose, onSubmit, onDelete }) {
       case 'DATE':  return new Date().toISOString().slice(0, 10);
       default:      return '';
     }
-  }).filter(Boolean).join(form.separator) + (form.format === 'png' ? '.png' : form.format === 'webp' ? '.webp' : '.jpg');
+  }).filter(Boolean).join(form.separator) + (form.format === 'png' ? '.png' : form.format === 'webp' ? '.webp' : form.format === 'avif' ? '.avif' : '.jpg');
 
   const footer = (
     <>

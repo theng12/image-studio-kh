@@ -446,7 +446,20 @@ app.whenReady().then(() => {
               // below for the full rationale.
               "script-src 'self' 'wasm-unsafe-eval' 'unsafe-eval' blob:; " +
               "worker-src 'self' blob:; " +
-              `connect-src 'self' ${serverOrigin} app-image: data: blob:;`,
+              // v0.49.33: added `https://staticimgly.com` to the
+              // client-mode CSP allow-list. Without it, bg-removal on
+              // client Macs blew up on first use with "Failed to fetch
+              // dynamically imported module" — @imgly tries to pull the
+              // ~80 MB ONNX model from staticimgly.com and the CSP
+              // dropped the request silently. Standalone mode already
+              // had this whitelisted (see the headers block below);
+              // client mode was missing it because the policy was
+              // hand-rolled separately. Both branches now whitelist
+              // the same model host. After v0.49.33 the model
+              // downloads + caches the same way it does in standalone
+              // mode — first run pulls ~80 MB; subsequent launches are
+              // offline.
+              `connect-src 'self' ${serverOrigin} https://staticimgly.com app-image: data: blob:;`,
             ],
           },
         });
@@ -526,7 +539,11 @@ app.whenReady().then(() => {
             // scripts can come from ('self' + blob: for the ONNX worker).
             "script-src 'self' 'wasm-unsafe-eval' 'unsafe-eval' blob:; " +
             "worker-src 'self' blob:; " +
-            "connect-src 'self' https://staticimgly.com https://api.remove.bg app-image: data: blob:;",
+            // v0.49.33: dropped `https://api.remove.bg` — the paid
+            // bg-removal engine was removed. The only third-party host
+            // in connect-src now is staticimgly.com (for the local
+            // @imgly model download).
+            "connect-src 'self' https://staticimgly.com app-image: data: blob:;",
           ],
         },
       });

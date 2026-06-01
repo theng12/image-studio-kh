@@ -134,6 +134,7 @@ function expectedOutputs({ profile, productIds }) {
   const subfolder = profile.outputSubfolder || '';
   const ext = profile.format === 'png' ? '.png'
             : profile.format === 'webp' ? '.webp'
+            : profile.format === 'avif' ? '.avif'
             : '.jpg';
   const dateStr = todayStr();
   const entries = [];
@@ -220,6 +221,12 @@ async function processOneImage({ sourceAbs, profile, outPath }) {
     case 'webp':
       pipeline = pipeline.webp({ quality: profile.quality ?? 88 });
       break;
+    case 'avif':
+      // AVIF keeps alpha (no flatten needed). Its quality scale runs
+      // smaller than JPEG/WebP — ~50–65 already looks great at roughly
+      // half the JPEG size, so default lower when the profile didn't set one.
+      pipeline = pipeline.avif({ quality: profile.quality ?? 55 });
+      break;
     case 'jpg':
     case 'jpeg':
     default:
@@ -260,6 +267,7 @@ async function runExport({ profile, productIds, outputRoot, onProgress, onExisti
 
   const ext = profile.format === 'png' ? '.png'
             : profile.format === 'webp' ? '.webp'
+            : profile.format === 'avif' ? '.avif'
             : '.jpg';
   const dateStr = todayStr();
 

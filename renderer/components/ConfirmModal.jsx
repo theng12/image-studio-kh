@@ -28,6 +28,11 @@ export function ConfirmModal({
   danger = false,
   busy = false,
   closeOnBackdrop = false,
+  // v0.49.31: optional React node rendered inside the dialog body,
+  // below the message/detail. Used to drop a live "last backup was…
+  // [Create backup now]" affordance into high-impact destructive
+  // confirms without each caller re-implementing it.
+  extra = null,
   // v0.26.21: optional keyboard hotkey for the confirm action so the
   // user can fire destructive ops without reaching for the mouse.
   // Format: lower-case 'shift+d', 'cmd+enter', 'd', etc. Parsed by
@@ -84,6 +89,7 @@ export function ConfirmModal({
       <div className="confirm-modal__body">
         {message ? <p className="confirm-modal__message">{message}</p> : null}
         {detail ? <p className="confirm-modal__detail">{detail}</p> : null}
+        {extra}
       </div>
     </Modal>
   );
@@ -194,6 +200,7 @@ export function confirm(opts) {
           danger={!!opts.danger}
           busy={busy}
           closeOnBackdrop={!!opts.closeOnBackdrop}
+          extra={opts.extra ?? null}
           hotkey={opts.hotkey}
           onCancel={cancelRef.current}
           onConfirm={confirmRef.current}

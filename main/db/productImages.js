@@ -397,6 +397,25 @@ function setContentHash(productId, filepath, hash) {
   return getByFilepath(productId, filepath);
 }
 
+/**
+ * v0.49.28: update a row's stored filepath. Used by the re-encode flow when
+ * the format conversion changes the file extension (e.g. PNG → JPEG); the
+ * file on disk gets a new name and the row needs to follow it. Returns the
+ * refreshed row.
+ */
+function setFilepath(productId, oldFilepath, newFilepath) {
+  let size = null;
+  try { size = fs.statSync(path.join(getDataDir(), 'assets', newFilepath)).size; } catch (_) {}
+  getDb()
+    .prepare(
+      `UPDATE product_images
+       SET filepath = ?, file_size = ?
+       WHERE product_id = ? AND filepath = ?`,
+    )
+    .run(newFilepath, size, productId, oldFilepath);
+  return getByFilepath(productId, newFilepath);
+}
+
 /** v0.31.0: mark a row exempt from the near-duplicate scan (set on
  *  export-derived copies so they're never flagged against their original). */
 function setDedupExempt(id, exempt) {
@@ -433,6 +452,7 @@ module.exports = {
   setMain,
   setProcessed,
   setContentHash,
+  setFilepath,
   setPerceptualHashById,
   setDedupExempt,
   countByFilepath,

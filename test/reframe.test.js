@@ -74,6 +74,59 @@ test('sampleBackgroundColor — reads the dominant solid colour', { skip }, asyn
   assert.equal(hex, '#C81E28');
 });
 
+/** White canvas with a centered solid block — a "product on white bg". */
+async function productOnWhite(canvas, block, rgb) {
+  const blk = await sharp({ create: { width: block, height: block, channels: 3, background: rgb } })
+    .png().toBuffer();
+  return sharp({ create: { width: canvas, height: canvas, channels: 3, background: { r: 255, g: 255, b: 255 } } })
+    .composite([{ input: blk, gravity: 'centre' }])
+    .png().toBuffer();
+}
+
+/** Fraction of non-white pixels in a PNG buffer. */
+async function fractionColored(buf) {
+  const { data, info } = await sharp(buf).removeAlpha().raw().toBuffer({ resolveWithObject: true });
+  let colored = 0;
+  for (let i = 0; i < data.length; i += 3) {
+    if (!(data[i] > 240 && data[i + 1] > 240 && data[i + 2] > 240)) colored += 1;
+  }
+  return colored / (info.width * info.height);
+}
+
+test('autoCrop — trims the white border so the product fills the frame', { skip }, async () => {
+  // A tiny 80px product floating in a 400px white field. With autoCrop the
+  // white is trimmed first, so the product should fill ~scale² of the canvas.
+  // Without it, the whole 400px (mostly white) shrinks and the product stays
+  // tiny. Comparing the two proves the trim actually happened.
+  const src = await productOnWhite(400, 80, { r: 220, g: 10, b: 10 });
+
+  const cropped = await reframe.reframeImage({
+    inputImage: src, canvasW: 400, canvasH: 400, scale: 0.8, autoCrop: true,
+    fillMode: 'color', fillColor: '#FFFFFF',
+  });
+  const plain = await reframe.reframeImage({
+    inputImage: src, canvasW: 400, canvasH: 400, scale: 0.8, autoCrop: false,
+    fillMode: 'color', fillColor: '#FFFFFF',
+  });
+
+  const cropFrac = await fractionColored(cropped);
+  const plainFrac = await fractionColored(plain);
+  assert.ok(cropFrac > 0.4, `auto-cropped product should fill the frame, got ${cropFrac.toFixed(3)}`);
+  assert.ok(plainFrac < 0.1, `un-cropped product should stay tiny, got ${plainFrac.toFixed(3)}`);
+  assert.ok(cropFrac > plainFrac * 4, 'auto-crop should massively enlarge the product');
+});
+
+test('autoCrop — a uniform image (nothing to trim) falls back without throwing', { skip }, async () => {
+  const src = await solid(300, 300, { r: 255, g: 255, b: 255 });
+  const out = await reframe.reframeImage({
+    inputImage: src, canvasW: 500, canvasH: 500, scale: 0.9, autoCrop: true,
+    fillMode: 'color', fillColor: '#FFFFFF',
+  });
+  const meta = await sharp(out).metadata();
+  assert.equal(meta.width, 500);
+  assert.equal(meta.height, 500);
+});
+
 test('parseHexColor — expands #RGB and rejects garbage', { skip }, () => {
   assert.deepEqual(reframe.parseHexColor('#abc'), { r: 170, g: 187, b: 204, alpha: 1 });
   assert.deepEqual(reframe.parseHexColor('#FF8800'), { r: 255, g: 136, b: 0, alpha: 1 });

@@ -1,7 +1,6 @@
 import { Button, Input, Select } from '../../components/ui.jsx';
 import { Section } from '../../components/Section.jsx';
 import { FILL_SWATCHES, MARKETPLACE_PRESETS, WATERMARK_CORNERS, getPreset } from '../../lib/presets.js';
-import { useAppStore } from '../../store/index.js';
 
 export function SettingsPanel({
   settings,
@@ -17,23 +16,13 @@ export function SettingsPanel({
   onUploadWatermark,
   fillPreview,
   onToggleFillPreview,
+  // v0.49.20: callback fired after the watermark→template bridge saves.
+  onWatermarkSavedAsTemplate,
 }) {
-  // Engine selector lives in store-backed config so the Workspace, Settings
-  // page, and any future caller all read the same value. Changing it here
-  // writes through to settings.json and refreshes the store mirror.
-  const appConfig = useAppStore((s) => s.appConfig);
-  const refreshAppConfig = useAppStore((s) => s.refreshAppConfig);
-  const addToast = useAppStore((s) => s.addToast);
-  const setActiveModule = useAppStore((s) => s.setActiveModule);
-
-  async function setEngine(value) {
-    try {
-      await window.api.settings.setOne('bgRemovalEngine', value);
-      await refreshAppConfig();
-    } catch (err) {
-      addToast(err.message, 'error');
-    }
-  }
+  // v0.49.33: removed the local/remove.bg engine selector — the paid
+  // remove.bg engine was dropped. Bg removal is now always the bundled
+  // local @imgly engine; the picker, the API-key hint, and the store
+  // wiring are gone with it.
   const wm = settings.watermark;
 
   function patch(part) {
@@ -68,46 +57,15 @@ export function SettingsPanel({
             <span>Remove background</span>
           </label>
 
-          {/* Engine picker — only visible when bg removal is on. 'Local' is
-              the bundled @imgly WASM (downloads once, runs offline). 'remove.bg'
-              hits the paid cloud API and requires a key configured in Settings. */}
+          {/* v0.49.33: when bg removal is on, surface a one-line hint
+              about the local engine + where to pre-download the model.
+              The "Local vs remove.bg" picker is gone — there's only one
+              engine now. */}
           {settings.removeBackground ? (
-            <div className="ws-bg-engine">
-              <div className="ws-bg-engine__row">
-                <span className="ws-bg-engine__label">Engine</span>
-                <div className="ws-toolbar__group">
-                  <button
-                    type="button"
-                    className={`segment${appConfig.bgRemovalEngine !== 'removebg' ? ' is-active' : ''}`}
-                    onClick={() => setEngine('local')}
-                    title="Bundled @imgly WASM — first run downloads a ~80MB model, then offline forever"
-                  >Local</button>
-                  <button
-                    type="button"
-                    className={`segment${appConfig.bgRemovalEngine === 'removebg' ? ' is-active' : ''}`}
-                    onClick={() => setEngine('removebg')}
-                    title="remove.bg cloud API — needs a key from Settings"
-                  >remove.bg</button>
-                </div>
-              </div>
-              {appConfig.bgRemovalEngine === 'removebg' && !appConfig.removeBgApiKey ? (
-                <p className="ws-bg-engine__hint ws-bg-engine__hint--warn">
-                  No remove.bg API key set.{' '}
-                  <button
-                    type="button"
-                    className="link-button"
-                    onClick={() => setActiveModule('settings')}
-                  >Open Settings</button>
-                  {' '}to add one.
-                </p>
-              ) : (
-                <p className="ws-bg-engine__hint">
-                  {appConfig.bgRemovalEngine === 'removebg'
-                    ? 'Cloud API — ~1s per image. Counts against your remove.bg plan.'
-                    : 'Local WASM — first run downloads a ~80MB model (then offline). Pre-download from Settings to avoid the wait.'}
-                </p>
-              )}
-            </div>
+            <p className="ws-bg-engine__hint">
+              Uses the bundled local @imgly model. First run downloads ~80 MB,
+              then it works offline. Pre-download from Settings to skip the wait.
+            </p>
           ) : null}
 
           <div className="swatch-row">
@@ -196,41 +154,10 @@ export function SettingsPanel({
           </label>
         </Section>
 
-        <Section title="Orient">
-          {/* Rotation in 90° steps. Lossless when baked by Sharp because
-              we're using multiples of 90 (no resampling needed). */}
-          <div className="rotate-row">
-            <div className="ws-toolbar__group">
-              <button
-                type="button"
-                className="segment"
-                onClick={() => patch({ rotation: ((settings.rotation ?? 0) - 90 + 360) % 360 })}
-                title="Rotate 90° left"
-              >
-                <RotateGlyph direction="left" /> 90° left
-              </button>
-              <button
-                type="button"
-                className="segment"
-                onClick={() => patch({ rotation: ((settings.rotation ?? 0) + 90) % 360 })}
-                title="Rotate 90° right"
-              >
-                <RotateGlyph direction="right" /> 90° right
-              </button>
-              <button
-                type="button"
-                className={`segment${(settings.rotation ?? 0) === 0 ? ' is-active' : ''}`}
-                onClick={() => patch({ rotation: 0 })}
-                title="Reset to original orientation"
-              >
-                Reset
-              </button>
-            </div>
-            <span className="muted rotate-row__value">
-              {(((settings.rotation ?? 0) % 360) + 360) % 360}°
-            </span>
-          </div>
-        </Section>
+        {/* v0.49.17: the "Orient" section (90° rotate left/right/reset) moved
+            to the canvas tools row alongside Crop, so all framing & orient
+            controls live together. Settings panel keeps only durable per-
+            session knobs (canvas size, background, watermark, enhance). */}
 
         <Section title="Enhance">
           <label className="toggle">
@@ -266,6 +193,42 @@ export function SettingsPanel({
             <span>Add shadow</span>
           </label>
           <p className="ws-hint">Shadow only renders when background removal is on.</p>
+        </Section>
+
+        {/* v0.49.18: Tone panel. Currently just Exposure — a true stop scale
+            applied via sharp.linear(2^(exposure/100), 0). Highlights /
+            Shadows / Whites / Blacks would need a proper LUT pass; coming
+            in a follow-up patch when we add the curve plumbing. */}
+        <Section title="Tone" defaultOpen={false}>
+          <SliderField
+            label="Exposure"
+            value={settings.tone?.exposure ?? 0}
+            min={-100}
+            max={100}
+            onChange={(v) => patch({ tone: { ...(settings.tone || {}), exposure: v } })}
+          />
+          <p className="ws-hint">±100 = ±1 stop. Multiplicative (Lightroom-style), not additive.</p>
+        </Section>
+
+        {/* v0.49.18: Detail panel — sharpen + denoise via sharp\'s built-in
+            unsharp-mask and median filter. Both are no-ops at 0 so they
+            don\'t cost time on processed images that don\'t need them. */}
+        <Section title="Detail" defaultOpen={false}>
+          <SliderField
+            label="Sharpen"
+            value={settings.detail?.sharpen ?? 0}
+            min={0}
+            max={100}
+            onChange={(v) => patch({ detail: { ...(settings.detail || {}), sharpen: v } })}
+          />
+          <SliderField
+            label="Noise reduction"
+            value={settings.detail?.denoise ?? 0}
+            min={0}
+            max={100}
+            onChange={(v) => patch({ detail: { ...(settings.detail || {}), denoise: v } })}
+          />
+          <p className="ws-hint">Strong noise reduction (≥ 70) noticeably softens fine detail.</p>
         </Section>
 
         <Section title="Watermark" defaultOpen={false}>
@@ -317,6 +280,64 @@ export function SettingsPanel({
                 suffix="%"
                 onChange={(v) => patchWatermark({ opacity: v / 100 })}
               />
+
+              {/* v0.49.20: bridge from Workspace watermark → Overlay templates.
+                  Pre-v0.49.20 the two systems were parallel: this watermark
+                  applied only to the active product, Overlay templates were
+                  a separate concept. Now you can promote the current
+                  watermark config into a reusable Overlay template — then
+                  bulk-apply it to N products via Library\'s bulk overlay flow. */}
+              {wm.relativePath ? (
+                <div className="ws-watermark-bridge">
+                  <Button
+                    onClick={async () => {
+                      const name = window.prompt(
+                        'Save this watermark as a reusable Overlay template?\n\nName:',
+                        `Watermark · ${new Date().toISOString().slice(0, 10)}`,
+                      );
+                      if (!name?.trim()) return;
+                      // Map Workspace corner ('tl' / 'tr' / 'bl' / 'br') to
+                      // template (x, y, anchor). Margin matches the pipeline\'s
+                      // 3% of canvas; width matches the 18% rendered size.
+                      const MARGIN = 0.03;
+                      const cornerMap = {
+                        tl: { x: MARGIN,     y: MARGIN,     anchor: 'tl' },
+                        tr: { x: 1 - MARGIN, y: MARGIN,     anchor: 'tr' },
+                        bl: { x: MARGIN,     y: 1 - MARGIN, anchor: 'bl' },
+                        br: { x: 1 - MARGIN, y: 1 - MARGIN, anchor: 'br' },
+                      };
+                      const pos = cornerMap[wm.corner] || cornerMap.br;
+                      const tpl = {
+                        name: name.trim(),
+                        canvasWidth:  settings.canvasWidth || 2000,
+                        canvasHeight: settings.canvasHeight || 2000,
+                        elements: [{
+                          id: 'wm-1',
+                          type: 'image',
+                          source: `asset:${wm.relativePath}`,
+                          width: 0.18,
+                          opacity: wm.opacity ?? 0.7,
+                          ...pos,
+                        }],
+                        tags: 'watermark',
+                      };
+                      try {
+                        await window.api.templates.create(tpl);
+                        // Use the workspace store\'s toast — patch passes
+                        // through to it via the parent component.
+                        if (typeof onWatermarkSavedAsTemplate === 'function') {
+                          onWatermarkSavedAsTemplate(tpl.name);
+                        }
+                      } catch (err) {
+                        window.alert(`Failed to save template: ${err.message}`);
+                      }
+                    }}
+                  >Save as Overlay template…</Button>
+                  <p className="ws-hint">
+                    Lets you apply this watermark to many products at once via Library → bulk overlay.
+                  </p>
+                </div>
+              ) : null}
             </>
           ) : null}
         </Section>
@@ -355,22 +376,8 @@ export function SettingsPanel({
   );
 }
 
-function RotateGlyph({ direction = 'right' }) {
-  // 14×14 curved-arrow glyph. Drawn once and mirrored for left vs right.
-  return (
-    <svg
-      width="14"
-      height="14"
-      viewBox="0 0 14 14"
-      fill="none"
-      aria-hidden
-      style={{ marginRight: 4, transform: direction === 'left' ? 'scaleX(-1)' : 'none' }}
-    >
-      <path d="M3 7a4 4 0 1 1 1.2 2.85" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
-      <path d="M3 4.5V7h2.5" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
-    </svg>
-  );
-}
+// v0.49.17: RotateGlyph moved to CanvasView (it\'s where the rotate buttons
+// now live — alongside Crop, in the canvas tools row).
 
 function SliderField({ label, value, min, max, suffix = '', onChange }) {
   return (

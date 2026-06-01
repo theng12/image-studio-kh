@@ -5,6 +5,7 @@ import { PageHeader } from '../../components/PageHeader.jsx';
 import { confirm } from '../../components/ConfirmModal.jsx';
 import { BulkSourcePanel } from './BulkSourcePanel.jsx';
 import { BulkGallery } from './BulkGallery.jsx';
+import { PromptLibraryModal } from './PromptLibraryModal.jsx';
 
 const MODE_STORAGE_KEY = 'AIStudio.mode';
 const BULK_EXPORT_DIR_STORAGE_KEY = 'AIStudio.bulkExportDir';
@@ -89,6 +90,8 @@ export function AIStudio() {
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [promptModalOpen, setPromptModalOpen] = useState(false);
   const [editingPrompt, setEditingPrompt] = useState(null);
+  // v0.39.0: built-in prompt-library browser.
+  const [promptLibraryOpen, setPromptLibraryOpen] = useState(false);
   const [costEstimate, setCostEstimate] = useState(null);
   const [previewingPath, setPreviewingPath] = useState(null);
   const [queuePage, setQueuePage] = useState(0);
@@ -566,7 +569,10 @@ export function AIStudio() {
           <div className="ai-prompt-templates">
             <div className="filter-group__head">
               <span className="filter-group__label">Templates</span>
-              <button type="button" className="filter-group__clear" onClick={openNewPrompt}>+ New</button>
+              <span className="ai-template-head-actions">
+                <button type="button" className="filter-group__clear" onClick={() => setPromptLibraryOpen(true)}>Browse library</button>
+                <button type="button" className="filter-group__clear" onClick={openNewPrompt}>+ New</button>
+              </span>
             </div>
             {prompts.length === 0 ? (
               <p className="muted setting-row__inline-empty">No templates yet. Save your favorite prompts as templates and pick them with one click.</p>
@@ -629,12 +635,15 @@ export function AIStudio() {
             {({ id }) => (
               <Select id={id} value={selectedModelKey} onChange={(e) => setAiSelectedModel(e.target.value)}>
                 <optgroup label="kie.ai">
-                  {models.filter((m) => m.provider === 'kie').map((m) => (
+                  {models.filter((m) => m.provider === 'kie' && !m.deprecated).map((m) => (
                     <option key={m.key} value={m.key}>{m.displayName}</option>
                   ))}
                 </optgroup>
                 <optgroup label="fal.ai">
-                  {models.filter((m) => m.provider === 'fal').map((m) => (
+                  {/* v0.49.25: hide deprecated models from the picker but keep them
+                      in the MODELS array so already-queued tasks still resolve a
+                      displayName + cost row when the queue runner looks them up. */}
+                  {models.filter((m) => m.provider === 'fal' && !m.deprecated).map((m) => (
                     <option key={m.key} value={m.key}>{m.displayName}</option>
                   ))}
                 </optgroup>
@@ -656,12 +665,31 @@ export function AIStudio() {
             </Field>
           ) : null}
 
-          {/* Resolution (newer kie market models like GPT Image-2) */}
+          {/* Resolution (newer kie market models like GPT Image-2).
+              v0.49.22: hint clarifies what 1K / 2K / 4K actually mean in
+              pixels — easy to confuse 1K (a resolution tier) with the
+              fal `1024x1024` image_size enum, and the "it\'s cheap" question
+              was really about which pixel dimensions the K labels resolve to. */}
           {selectedModel?.resolutions?.length ? (
-            <Field label="Resolution" hint="Higher = larger image. 1K is required for 1:1 or auto.">
+            <Field label="Resolution" hint="1K ≈ 1024px on the long edge, 2K ≈ 2048px, 4K ≈ 4096px. 1K is required for 1:1 / auto aspect.">
               {({ id }) => (
                 <Select id={id} value={aiOptions.resolution ?? selectedModel.resolutions[0]} onChange={(e) => setAiOptions({ resolution: e.target.value })}>
                   {selectedModel.resolutions.map((r) => <option key={r} value={r}>{r}</option>)}
+                </Select>
+              )}
+            </Field>
+          ) : null}
+
+          {/* v0.49.25: Quality picker for `openai/gpt-image-2/*` models.
+              Cost varies ~6× between low and high on the same size, so
+              exposing this is a real lever. The official pricing matrix:
+                1024×1024 low=$0.015 medium=$0.061 high=$0.219.
+              "auto" defers to the model\'s own quality routing. */}
+          {selectedModel?.qualities?.length ? (
+            <Field label="Quality" hint="auto: model picks. low: cheap & fast (~$0.015/img at 1024×1024). medium: balanced (~$0.061). high: best fidelity, ~6× the cost of low.">
+              {({ id }) => (
+                <Select id={id} value={aiOptions.quality ?? selectedModel.qualities[0]} onChange={(e) => setAiOptions({ quality: e.target.value })}>
+                  {selectedModel.qualities.map((q) => <option key={q} value={q}>{q}</option>)}
                 </Select>
               )}
             </Field>
@@ -880,7 +908,16 @@ export function AIStudio() {
                 // recoverable — treat it like Failed for the action buttons and
                 // label it so the user sees something is off.
                 const isStuckDone = t.status === 'done' && (t.galleryCount ?? 0) === 0;
-                const needsRecovery = t.status === 'failed' || t.status === 'cancelled' || isStuckDone;
+                // v0.49.27: also surface Repair on tasks that have been
+                // running > 5 minutes AND have a providerTaskId. That covers
+                // the "fal says success, our app shows running forever"
+                // class of bug — the user can force a re-poll instead of
+                // waiting on whatever ticks left. Threshold is conservative
+                // so normal in-flight tasks don\'t get a useless button.
+                const startedAtMs = t.startedAt || t.createdAt || 0;
+                const ageMin = startedAtMs ? (Date.now() - Number(startedAtMs)) / 60000 : 0;
+                const longRunning = t.status === 'running' && !!t.providerTaskId && ageMin > 5;
+                const needsRecovery = t.status === 'failed' || t.status === 'cancelled' || isStuckDone || longRunning;
                 let status = STATUS_TONE[t.status] ?? STATUS_TONE.queued;
                 if (isStuckDone) status = { tone: 'amber', label: 'Done · no images' };
                 const errorOrPrompt = needsRecovery && (t.errorMessage || isStuckDone)
@@ -953,6 +990,29 @@ export function AIStudio() {
                           >Queue fresh</button>
                         </>
                       ) : null}
+                      {/* v0.49.24: when a task drags on (no log in the UI to
+                          help diagnose why), let the user grab the provider
+                          task ID so they can look it up on the provider\'s
+                          own dashboard. Only meaningful once the provider
+                          has assigned one (i.e. submit has gone through). */}
+                      {t.providerTaskId && (t.status === 'running' || t.status === 'queued' || t.status === 'failed') ? (
+                        <button
+                          type="button"
+                          className="row-action"
+                          title={`Copy task ID — paste on ${t.provider === 'fal' ? 'fal.ai/dashboard/requests' : 'kie.ai/logs'} to look it up`}
+                          onClick={async () => {
+                            try {
+                              await navigator.clipboard.writeText(t.providerTaskId);
+                              const where = t.provider === 'fal'
+                                ? 'Open fal.ai/dashboard/requests and search'
+                                : 'Open kie.ai/logs and search';
+                              addToast(`Copied ${t.providerTaskId.slice(0, 8)}… — ${where}`, 'success');
+                            } catch (err) {
+                              addToast(`Clipboard failed: ${err.message}`, 'error');
+                            }
+                          }}
+                        >Copy ID</button>
+                      ) : null}
                       {t.status === 'running' || t.status === 'queued' ? (
                         <button type="button" className="row-action" onClick={() => cancelAiTask(t.id)}>Cancel</button>
                       ) : null}
@@ -999,6 +1059,15 @@ export function AIStudio() {
         template={editingPrompt}
         onClose={() => setPromptModalOpen(false)}
         onSave={handleSavePrompt}
+      />
+
+      {/* v0.39.0: built-in prompt-library browser */}
+      <PromptLibraryModal
+        open={promptLibraryOpen}
+        companyId={activeCompanyId}
+        onClose={() => setPromptLibraryOpen(false)}
+        onUse={(body) => setAiPrompt(body)}
+        onSaved={() => refreshAiPrompts()}
       />
 
       {/* Gallery image preview */}

@@ -777,6 +777,167 @@ button.sidebar__storage-tag:focus-visible { outline: 2px solid #10b981; outline-
   border-top: 1px solid var(--c-border, rgba(0, 0, 0, 0.08));
 }
 
+/* v0.37.0: batch auto-crop modal. */
+.autocrop-run { display: flex; flex-direction: column; gap: 14px; }
+.autocrop-run__intro {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--c-text-muted, #64748b);
+}
+.autocrop-run__slider { display: flex; align-items: center; gap: 10px; }
+.autocrop-run__slider input[type="range"] { flex: 1; }
+.autocrop-run__slider-val {
+  min-width: 42px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+}
+.autocrop-run__fill { display: flex; align-items: center; gap: 10px; }
+.autocrop-run__fill > select { flex: 1; }
+.autocrop-run__swatch {
+  width: 40px;
+  height: 32px;
+  padding: 2px;
+  border: 1px solid var(--c-border, rgba(0, 0, 0, 0.15));
+  border-radius: 6px;
+  background: none;
+  cursor: pointer;
+}
+.autocrop-run__footer {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding-top: 12px;
+  border-top: 1px solid var(--c-border, rgba(0, 0, 0, 0.08));
+}
+.autocrop-run__preview {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 12px;
+  border-radius: 8px;
+  background:
+    repeating-conic-gradient(#f2f2f2 0% 25%, #fafafa 0% 50%) 0 / 18px 18px;
+}
+.autocrop-run__preview figure { margin: 0; flex: 1; max-width: 220px; text-align: center; }
+.autocrop-run__pv-img {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  aspect-ratio: 1;
+  border: 1px solid var(--c-border, rgba(0, 0, 0, 0.12));
+  border-radius: 6px;
+  background: #fff;
+  overflow: hidden;
+}
+.autocrop-run__pv-img img { width: 100%; height: 100%; object-fit: contain; transition: opacity .15s; }
+.autocrop-run__preview figcaption {
+  margin-top: 6px;
+  font-size: 11px;
+  color: var(--c-text-muted, #64748b);
+}
+.autocrop-run__pv-arrow { font-size: 20px; color: var(--c-text-muted, #94a3b8); }
+.autocrop-run__skip {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--c-text-muted, #64748b);
+  cursor: pointer;
+}
+.autocrop-run__toggles { display: flex; flex-direction: column; gap: 8px; }
+
+/* v0.38.0: bulk background-removal modal. */
+.bulkbg { display: flex; flex-direction: column; gap: 14px; }
+.bulkbg__intro { margin: 0; font-size: 13px; line-height: 1.5; color: var(--c-text-muted, #64748b); }
+.bulkbg__intro strong { color: var(--c-text, inherit); }
+.bulkbg__fill { display: flex; align-items: center; gap: 10px; }
+.bulkbg__engine { margin: 0; font-size: 12px; line-height: 1.5; }
+.bulkbg__progress { display: flex; flex-direction: column; gap: 6px; }
+.bulkbg__bar {
+  height: 8px;
+  border-radius: 4px;
+  background: var(--c-border, rgba(0, 0, 0, 0.1));
+  overflow: hidden;
+}
+.bulkbg__bar span {
+  display: block;
+  height: 100%;
+  background: var(--c-accent, #2563eb);
+  transition: width .2s;
+}
+.bulkbg__status { font-size: 12px; color: var(--c-text-muted, #64748b); }
+
+/* v0.45.0: role-based UI gating for the desktop renderer.
+   The server's permissions.js ACL is the authoritative gate; this is the UX
+   layer so Viewer/Photographer users don't see buttons that would just 403.
+   Sidebar nav is already filtered in code (Sidebar.jsx — `roleMin` per item).
+   These rules cover the per-page surfaces where in-flow CSS is enough. */
+body[data-role="viewer"] .lib-bulk-toolbar,
+body[data-role="photographer"] .lib-bulk-toolbar { display: none !important; }
+body[data-role="viewer"] .image-tile__remove,
+body[data-role="viewer"] .image-tile__set-main,
+body[data-role="viewer"] .image-tile__reframe,
+body[data-role="viewer"] .image-tile__nav-btn,
+body[data-role="photographer"] .image-tile__remove,
+body[data-role="photographer"] .image-tile__set-main,
+body[data-role="photographer"] .image-tile__reframe,
+body[data-role="photographer"] .image-tile__nav-btn { display: none !important; }
+
+/* Tightens the catalog-CSV export Select in the Library toolbar — the native
+   widget would otherwise size itself to the widest dropdown option. Tooltip
+   on the element carries the full "Catalog · Shopify · Google Shopping" hint. */
+.lib-csv-select { width: auto; min-width: 0; max-width: 110px; }
+
+/* v0.39.0: prompt library browser + entry points. */
+.ai-template-head-actions { display: inline-flex; gap: 10px; }
+.bulk-ai-run__template-row { display: flex; align-items: center; gap: 8px; }
+.bulk-ai-run__template-row > select { flex: 1; }
+
+/* v0.43.0: was `min-width: min(640px, 80vw)` — that locked the inner content
+   to ~640px even when the modal grew, forcing a horizontal scrollbar inside
+   the modal body. Drop the min-width and let the rows fill the (now xxl)
+   modal naturally; per-row `flex` + `min-width: 0` on the text column already
+   wraps body text correctly. */
+.promptlib { display: flex; flex-direction: column; gap: 12px; }
+.promptlib__body { overflow-wrap: anywhere; }
+.promptlib__intro { margin: 0; font-size: 13px; line-height: 1.5; color: var(--c-text-muted, #64748b); }
+.promptlib__intro code { background: var(--c-border, rgba(0,0,0,0.06)); border-radius: 4px; padding: 0 2px; }
+.promptlib__search {
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid var(--c-border, rgba(0, 0, 0, 0.15));
+  border-radius: 6px;
+  font-size: 13px;
+}
+.promptlib__groups { max-height: 56vh; overflow-y: auto; display: flex; flex-direction: column; gap: 16px; }
+.promptlib__cat {
+  margin: 0 0 6px;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--c-text-muted, #94a3b8);
+}
+.promptlib__row {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 8px 0;
+  border-top: 1px solid var(--c-border, rgba(0, 0, 0, 0.06));
+}
+.promptlib__text { flex: 1; min-width: 0; }
+.promptlib__label { font-weight: 600; font-size: 13px; margin-bottom: 2px; }
+.promptlib__body { font-size: 12px; line-height: 1.45; color: var(--c-text-muted, #64748b); }
+.promptlib__actions { display: flex; gap: 6px; flex-shrink: 0; }
+.promptlib__footer {
+  display: flex;
+  align-items: center;
+  padding-top: 10px;
+  border-top: 1px solid var(--c-border, rgba(0, 0, 0, 0.08));
+}
+
 /* v0.18.1: Bulk-edit affordances in the Library.
    - col-select narrow column for the row checkbox
    - lib-bulk-toolbar appears above the table when 1+ rows are
@@ -815,6 +976,61 @@ button.sidebar__storage-tag:focus-visible { outline: 2px solid #10b981; outline-
 }
 .lib-bulk-toolbar__spacer {
   flex: 1;
+}
+
+/* v0.49.29: bulk-actions dropdown menu (popover). Sits inside the bulk
+   toolbar; opens beneath the trigger button. Each section gets a small
+   uppercase heading per CLAUDE.md §1 navigation convention. */
+.lib-bulk-menu { position: relative; }
+.lib-bulk-menu__panel {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  z-index: 30;
+  min-width: 280px;
+  background: var(--c-bg);
+  border: 1px solid var(--c-border);
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
+  padding: 6px;
+}
+.lib-bulk-menu__section { display: flex; flex-direction: column; }
+.lib-bulk-menu__divider {
+  height: 1px;
+  margin: 6px 4px;
+  background: var(--c-border);
+}
+.lib-bulk-menu__heading {
+  padding: 6px 10px 4px;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--c-text-subtle);
+}
+.lib-bulk-menu__item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 8px 10px;
+  background: transparent;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  color: var(--c-text);
+  font: inherit;
+}
+.lib-bulk-menu__item:hover,
+.lib-bulk-menu__item:focus-visible {
+  background: var(--c-hover-bg);
+  outline: none;
+}
+.lib-bulk-menu__item-label { font-size: 13px; font-weight: 500; }
+.lib-bulk-menu__item-hint {
+  font-size: 11px;
+  color: var(--c-text-subtle);
+  margin-top: 2px;
+  line-height: 1.3;
 }
 .bulk-edit {
   display: flex;
@@ -2482,7 +2698,13 @@ button.sidebar__storage-tag:focus-visible { outline: 2px solid #10b981; outline-
   display: flex;
   align-items: center;
   gap: var(--s-3);
-  flex-shrink: 0;
+  /* v0.32.0: was `flex-shrink: 0`, which (with the default min-width:auto)
+     made this block refuse to shrink — so the actions cluster rendered at
+     full intrinsic width and OVERFLOWED the page instead of letting the
+     inner `.page__header-actions` (which has flex-wrap) drop buttons to a
+     second line. Allowing shrink + min-width:0 lets the wrap actually fire. */
+  flex: 1 1 auto;
+  min-width: 0;
 }
 
 /* v0.22.16: removed `.company-chip` and friends — the active-company
@@ -2710,6 +2932,36 @@ button.sidebar__storage-tag:focus-visible { outline: 2px solid #10b981; outline-
   grid-template-columns: 1fr 1fr;
   gap: var(--s-4);
 }
+
+/* v0.35.0: catalog-completeness "needs attention" panel */
+.dash-attention {
+  margin-bottom: var(--s-4);
+  padding: var(--s-3) var(--s-4);
+  border: 1px solid var(--c-border);
+  border-radius: var(--radius-md);
+  background: var(--c-surface);
+}
+.dash-attention--ok {
+  border-color: var(--c-emerald);
+  background: #ecfdf5;
+  font-size: 13px;
+}
+[data-theme="dark"] .dash-attention--ok { background: #052e1b; }
+.dash-attention__title { font-size: 13px; margin: 0 0 8px; }
+.dash-attention__row { display: flex; flex-wrap: wrap; gap: 8px; }
+.dash-attention__chip {
+  border: 1px solid var(--c-border-strong);
+  background: var(--c-bg);
+  color: var(--c-text);
+  border-radius: 999px;
+  padding: 5px 12px;
+  font-size: 13px;
+}
+.dash-attention__chip strong { font-variant-numeric: tabular-nums; }
+.dash-attention__chip:not(.is-static):not(:disabled) { cursor: pointer; }
+.dash-attention__chip:not(.is-static):not(:disabled):hover { border-color: var(--accent, #2563eb); }
+.dash-attention__chip.is-static { cursor: default; }
+.dash-attention__chip:disabled { opacity: 0.5; cursor: default; }
 
 .dash-panel {
   background: var(--c-surface);
@@ -3134,6 +3386,10 @@ button.sidebar__storage-tag:focus-visible { outline: 2px solid #10b981; outline-
 /* ─── Modal sizing ──────────────────────────────────────────── */
 
 .modal--xl { max-width: 900px; }
+/* v0.43.0: "xxl" — fills ~92% of the viewport so wide content can breathe.
+   Used by the Prompt Library so each row's body text wraps naturally
+   instead of forcing a horizontal scroll inside the modal. */
+.modal--xxl { width: 92vw; max-width: 92vw; }
 
 /* ─── Lightbox (Library image preview) ─────────────────────── */
 
@@ -3204,6 +3460,82 @@ button.sidebar__storage-tag:focus-visible { outline: 2px solid #10b981; outline-
 }
 .lightbox__filename {
   font-family: var(--font-mono, ui-monospace, SFMono-Regular, monospace);
+}
+
+/* v0.49.34: image-metadata caption — dimensions, file size, format,
+   short content hash. Sits below the stage in the lower-center of the
+   overlay so it doesn't crowd the image itself. Pointer-events stay on
+   the row so the user can hover for tooltips, but each <span> inside
+   is just text — no clickable affordances. */
+.lightbox__caption {
+  position: absolute;
+  left: 50%;
+  bottom: 28px;
+  transform: translateX(-50%);
+  max-width: 90vw;
+  padding: 7px 14px;
+  background: rgba(0, 0, 0, 0.55);
+  color: rgba(255, 255, 255, 0.92);
+  border-radius: 6px;
+  font-size: 12px;
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, monospace);
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+  text-align: center;
+  pointer-events: auto;
+  user-select: text;
+  z-index: 5;
+}
+.lightbox__caption-loading,
+.lightbox__caption-missing {
+  color: rgba(255, 255, 255, 0.55);
+}
+.lightbox__caption-missing { color: rgb(252, 165, 165); }
+.lightbox__caption-sep {
+  color: rgba(255, 255, 255, 0.4);
+  margin: 0 2px;
+}
+
+/* v0.42.0: 360° spin controls live in the header (which is pointer-events:none
+   so it doesn't block the backdrop), so the controls must opt back in. */
+.lightbox__spin-controls {
+  margin-top: 8px;
+  display: flex;
+  gap: 8px;
+  pointer-events: auto;
+}
+.lightbox__spinbtn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 10px;
+  font-size: 12px;
+  color: #fff;
+  background: rgba(255, 255, 255, 0.12);
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  border-radius: 7px;
+  cursor: pointer;
+}
+.lightbox__spinbtn:hover { background: rgba(255, 255, 255, 0.2); }
+.lightbox__spinbtn.is-active {
+  background: #fff;
+  color: #111;
+  border-color: #fff;
+}
+.lightbox__stage--spin { cursor: ew-resize; touch-action: none; }
+.lightbox__stage--spin .lightbox__image { user-select: none; -webkit-user-drag: none; }
+.lightbox__spin-hint {
+  position: absolute;
+  bottom: 16px;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 3px 12px;
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  color: rgba(255, 255, 255, 0.8);
+  background: rgba(0, 0, 0, 0.45);
+  border-radius: 999px;
+  pointer-events: none;
 }
 
 /* v0.26.14: bottom-center floating toolbar with the destructive
@@ -4576,6 +4908,166 @@ button.sidebar__storage-tag:focus-visible { outline: 2px solid #10b981; outline-
 
 .image-tile:hover .image-tile__remove { opacity: 1; }
 
+/* v0.49.39: per-image multi-select checkbox. Top-LEFT of each tile so
+   it doesn't fight the X remove (top-right) for thumb-clearance.
+   Hidden by default; revealed on tile hover, OR on parent
+   .image-grid:has(.is-selected) so once selection mode starts, every
+   tile shows its empty box too (Mac Finder pattern). */
+.image-tile__check {
+  position: absolute;
+  top: 6px;
+  left: 6px;
+  z-index: 3;
+  width: 22px;
+  height: 22px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 80ms;
+}
+.image-tile:hover .image-tile__check { opacity: 1; }
+.image-grid:has(.image-tile.is-selected) .image-tile__check { opacity: 1; }
+.image-tile__check input[type="checkbox"] {
+  /* Hide the native checkbox but keep it focusable + clickable. */
+  position: absolute;
+  opacity: 0;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  cursor: pointer;
+}
+.image-tile__check-box {
+  width: 18px;
+  height: 18px;
+  border-radius: 4px;
+  background: rgba(255,255,255,0.92);
+  border: 1.5px solid var(--c-border-strong);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+  transition: background 80ms, border-color 80ms;
+}
+.image-tile__check input[type="checkbox"]:checked + .image-tile__check-box {
+  background: var(--c-accent, #3b82f6);
+  border-color: var(--c-accent, #3b82f6);
+}
+.image-tile__check input[type="checkbox"]:checked + .image-tile__check-box::after {
+  content: '';
+  width: 10px;
+  height: 6px;
+  border-left: 2px solid #fff;
+  border-bottom: 2px solid #fff;
+  transform: rotate(-45deg) translate(1px, -1px);
+}
+.image-tile.is-selected {
+  outline: 2px solid var(--c-accent, #3b82f6);
+  outline-offset: -2px;
+}
+
+/* v0.49.39: multi-select action strip above the image grid. Only
+   renders when at least one image is selected — the JSX gates this
+   too, but the class is here so any future "always-on bar" variant
+   doesn't need to re-pick colors / spacing. */
+.image-select-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  margin-bottom: 8px;
+  background: var(--c-bg-soft, rgba(59,130,246,0.08));
+  border: 1px solid var(--c-border, #d4d4d8);
+  border-radius: 6px;
+  font-size: 13px;
+}
+.image-select-bar__count {
+  font-weight: 600;
+  color: var(--c-text);
+  margin-right: auto;
+}
+.image-select-bar__drag {
+  /* Distinct from regular buttons — emphasize the drag affordance
+     with a dashed border + grab cursor so it reads "this is for
+     dragging, not clicking". */
+  padding: 4px 10px;
+  background: transparent;
+  border: 1.5px dashed var(--c-border-strong, #a1a1aa);
+  border-radius: 4px;
+  font-size: 13px;
+  cursor: grab;
+  color: var(--c-text);
+  user-select: none;
+}
+.image-select-bar__drag:active { cursor: grabbing; }
+.image-select-bar__drag:hover {
+  background: var(--c-bg-hover, rgba(0,0,0,0.04));
+  border-color: var(--c-accent, #3b82f6);
+  color: var(--c-accent, #3b82f6);
+}
+/* v0.49.40: client-mode drag prep state. The pill shows "Preparing
+   N…" while bytes download from the server. Solid amber border tells
+   the user "this is busy — keep your mouse held". */
+.image-select-bar__drag.is-prepping {
+  border-style: solid;
+  border-color: var(--c-amber, #f59e0b);
+  color: var(--c-amber, #f59e0b);
+  cursor: progress;
+}
+
+/* v0.49.39: "Copy ▾" dropdown menu in the image-grid header. */
+.copy-menu {
+  position: relative;
+}
+.copy-menu__panel {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 4px);
+  min-width: 280px;
+  padding: 6px;
+  background: var(--c-bg, #fff);
+  border: 1px solid var(--c-border, #d4d4d8);
+  border-radius: 6px;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.12);
+  z-index: 30;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.copy-menu__item {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  padding: 8px 10px;
+  background: transparent;
+  border: none;
+  border-radius: 4px;
+  text-align: left;
+  cursor: pointer;
+  font-size: 13px;
+  color: var(--c-text);
+  font-family: inherit;
+}
+.copy-menu__item:hover:not(:disabled) {
+  background: var(--c-bg-hover, rgba(0,0,0,0.05));
+}
+.copy-menu__item:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.copy-menu__label { font-weight: 500; }
+.copy-menu__hint {
+  font-size: 11px;
+  color: var(--c-text-muted, #71717a);
+}
+.copy-menu__sep {
+  height: 1px;
+  background: var(--c-border, #d4d4d8);
+  margin: 4px 0;
+}
+
 .image-tile__nav {
   position: absolute;
   bottom: 0;
@@ -5077,7 +5569,54 @@ button.sidebar__storage-tag:focus-visible { outline: 2px solid #10b981; outline-
   position: absolute;
   border: 2px solid white;
   box-shadow: 0 0 0 99999px rgba(20, 20, 28, 0.42);
+  /* v0.49.15: rect interior + handles need pointer events so move + resize
+     work. Children re-enable for the specific zones below. The mask-bg
+     pseudo-element used to dim outside the rect stays event-transparent. */
+}
+
+/* v0.49.15: drag-anywhere-inside-the-rect move zone. Lives behind the
+   handles in stacking order so corner handles win when they overlap. */
+.ws-crop__move-zone {
+  position: absolute;
+  inset: 12px;
+  cursor: move;
+  z-index: 1;
+}
+
+/* v0.49.15: corner resize handles. 4 corners only this batch; edge handles
+   in v0.49.16. White square with subtle ring so they\'re visible on any
+   image background. */
+.ws-crop__handle {
+  position: absolute;
+  width: 16px;
+  height: 16px;
+  background: white;
+  border: 1.5px solid rgba(20, 20, 28, 0.85);
+  border-radius: 2px;
+  z-index: 2;
+  box-sizing: border-box;
+}
+.ws-crop__handle--nw { top: -8px;    left: -8px;    cursor: nwse-resize; }
+.ws-crop__handle--ne { top: -8px;    right: -8px;   cursor: nesw-resize; }
+.ws-crop__handle--sw { bottom: -8px; left: -8px;    cursor: nesw-resize; }
+.ws-crop__handle--se { bottom: -8px; right: -8px;   cursor: nwse-resize; }
+
+/* v0.49.16: edge handles — long thin rectangles centred on each edge. */
+.ws-crop__handle--n  { top: -8px;    left: 50%;     transform: translateX(-50%); width: 24px; height: 12px; cursor: ns-resize; }
+.ws-crop__handle--s  { bottom: -8px; left: 50%;     transform: translateX(-50%); width: 24px; height: 12px; cursor: ns-resize; }
+.ws-crop__handle--e  { right: -8px;  top: 50%;      transform: translateY(-50%); width: 12px; height: 24px; cursor: ew-resize; }
+.ws-crop__handle--w  { left: -8px;   top: 50%;      transform: translateY(-50%); width: 12px; height: 24px; cursor: ew-resize; }
+
+/* v0.49.16: horizontal level reference line, anchored to the canvas centre.
+   Lives outside the crop overlay so it doesn\'t intercept clicks. */
+.ws-crop__level {
+  position: absolute;
+  left: 0; right: 0;
+  top: 50%;
+  height: 0;
+  border-top: 1px dashed rgba(34, 211, 238, 0.85);
   pointer-events: none;
+  z-index: 4;
 }
 
 .ws-crop__hint {
@@ -5092,6 +5631,48 @@ button.sidebar__storage-tag:focus-visible { outline: 2px solid #10b981; outline-
   padding: 2px 6px;
   border-radius: 4px;
   white-space: nowrap;
+  pointer-events: none;
+  z-index: 3;
+}
+
+/* v0.49.15: secondary toolbar under the canvas tools row when crop mode is
+   active. Aspect chips on the left, destination + Apply/Cancel on the right.
+   Wraps on narrow viewports so it stays usable on a 13" laptop. */
+.ws-crop-bar {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 12px;
+  margin-top: 8px;
+  padding: 8px 12px;
+  background: var(--c-elevated-bg);
+  border: 1px solid var(--c-border);
+  border-radius: 6px;
+}
+.ws-crop-bar__chips { display: flex; flex-wrap: wrap; gap: 4px; }
+.ws-crop-bar__custom { display: flex; align-items: center; gap: 6px; }
+.ws-crop-bar__custom input {
+  width: 56px; padding: 4px 6px; font-size: 12px;
+  border: 1px solid var(--c-border); border-radius: 4px;
+  background: var(--c-bg); color: var(--c-text);
+}
+.ws-crop-bar__custom span { color: var(--c-text-muted); font-weight: 600; }
+.ws-crop-bar__actions { display: flex; align-items: center; gap: 8px; margin-left: auto; }
+.ws-crop-bar__dest { display: flex; gap: 4px; }
+
+/* v0.49.16: straighten row. Slider plus angle readout plus optional Reset
+   button. Slider takes the bulk of the width so fine-tuning feels precise. */
+.ws-crop-bar__straighten {
+  display: flex; align-items: center; gap: 10px;
+  width: 100%;
+}
+.ws-crop-bar__straighten input[type="range"] { flex: 1; min-width: 0; }
+.ws-crop-bar__label {
+  font-size: 11px; font-weight: 700; color: var(--c-text-muted);
+  text-transform: uppercase; letter-spacing: 0.06em;
+  white-space: nowrap;
+}
+.ws-crop-bar__angle {
+  font-family: var(--font-mono);
+  font-size: 12px; color: var(--c-text);
+  min-width: 50px; text-align: right;
 }
 
 /* Alignment guides */
@@ -8581,4 +9162,71 @@ button.sidebar__storage-tag:focus-visible { outline: 2px solid #10b981; outline-
   position: absolute; bottom: 0; left: 0; right: 0;
   font-size: 10px; color: #fff; background: rgba(0,0,0,0.45);
   padding: 2px 4px; text-align: center;
+}
+
+/* ─── Backups (v0.49.31) ────────────────────────────────────────
+   Settings → Backups list + the shared BackupReminder affordance
+   that drops into destructive confirm dialogs + bulk modals. */
+.backups-dir-path {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  word-break: break-all;
+  color: var(--c-text);
+  padding: 4px 8px;
+  border: 1px solid var(--c-border);
+  border-radius: 6px;
+  background: var(--c-surface, rgba(0, 0, 0, 0.02));
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.backups-list { width: 100%; max-width: 720px; }
+.backups-table {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.backups-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s-3);
+  padding: var(--s-2) var(--s-3);
+  border: 1px solid var(--c-border);
+  border-radius: 8px;
+  background: var(--c-surface, rgba(0, 0, 0, 0.02));
+}
+.backups-row__main { min-width: 0; }
+.backups-row__when { font-size: 13px; font-weight: 600; color: var(--c-text); }
+.backups-row__rel, .backups-row__size { font-size: 12.5px; }
+.backups-row__file {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  word-break: break-all;
+  margin-top: 2px;
+}
+.backups-row__actions {
+  display: flex;
+  gap: var(--s-2);
+  flex: 0 0 auto;
+}
+
+/* The reminder shown inside destructive confirms / bulk modals. */
+.backup-reminder {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s-3);
+  margin-top: var(--s-3);
+  padding: var(--s-2) var(--s-3);
+  border: 1px solid var(--c-border);
+  border-radius: 8px;
+  background: var(--c-surface, rgba(0, 0, 0, 0.03));
+}
+.backup-reminder__status {
+  font-size: 12.5px;
+  color: var(--c-text);
+  min-width: 0;
 }

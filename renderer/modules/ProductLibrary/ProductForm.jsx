@@ -94,10 +94,40 @@ export function ProductForm({ product, isCreating = false, onClose, onStartCreat
   const createCategory = useAppStore((s) => s.createCategory);
   const addToast = useAppStore((s) => s.addToast);
   const openProductInWorkspace = useAppStore((s) => s.openProductInWorkspace);
+  // v0.49.39: drag-out is hidden in client mode (the multi-file
+  // drag-out IPC is a no-op there pending Phase 2 — see
+  // main/client/index.js for the rationale). "Copy to folder…" still
+  // works in every mode because the bytes get pulled through the
+  // app-image:// protocol passthrough.
+  const appMode = useAppStore((s) => s.appMode);
 
   const [form, setForm] = useState(emptyForm());
   const [images, setImages] = useState([]);
   const [saving, setSaving] = useState(false);
+  // v0.49.39: multi-select state for the image grid. Set of FILEPATHS
+  // (not indices — indices shift after a delete/reorder; filepaths are
+  // stable per row). When non-empty, the selection toolbar appears
+  // above the grid with Copy / Drag / Clear. The set resets when the
+  // displayed product changes — selections shouldn't leak across
+  // products since their filepaths reference different rows.
+  const [selectedFilepaths, setSelectedFilepaths] = useState(() => new Set());
+  // Copying-in-progress flag so we can disable the buttons + show
+  // "Copying…" during the IPC roundtrip. Folder picker latency + fetch
+  // time means a 20-image copy isn't instant on a slow client link.
+  const [copyingImages, setCopyingImages] = useState(false);
+  // v0.49.39: side-panel "Copy ▾" dropdown visibility. Closes on
+  // outside-click via a window-level handler installed when open.
+  const [copyMenuOpen, setCopyMenuOpen] = useState(false);
+  // v0.49.40: drag-prep state. In client mode the drag pill needs to
+  // download bytes from the server first; the dragstart handler
+  // awaits the download before calling startDrag. Shows a "Preparing
+  // {n}…" label so the user knows to keep holding their mouse — on
+  // Tailscale at 5 product images this typically completes inside
+  // 1 sec, well before the OS would cancel the gesture. In
+  // standalone mode prepareDrag is instant so this state flickers
+  // by too fast to see (and the pill label is back to "Drag" before
+  // the next paint).
+  const [draggingPrep, setDraggingPrep] = useState(false);
   // v0.29.0: per-image Reframe modal target ({ id, filepath, ... } | null).
   const [reframeTarget, setReframeTarget] = useState(null);
   // v0.18.0: Duplicate button busy state. Separate from saving so
@@ -121,7 +151,47 @@ export function ProductForm({ product, isCreating = false, onClose, onStartCreat
       setActiveProductId(null);
     }
     setSkuError(null);
+    // v0.49.39: drop any per-image selection when the displayed product
+    // changes. Filepaths reference rows of the OLD product; carrying
+    // them over would either match nothing or (worse) match a same-
+    // path image of the new product. Always reset.
+    setSelectedFilepaths(new Set());
+    setCopyMenuOpen(false);
   }, [product, isCreating]);
+
+  // v0.49.39: when the loaded image list shrinks (delete, reorder
+  // renumber, etc.), drop any selected filepaths that no longer exist.
+  // Same fix the Library does for selected product ids.
+  useEffect(() => {
+    setSelectedFilepaths((prev) => {
+      if (prev.size === 0) return prev;
+      const live = new Set(images.map((im) => im.filepath));
+      let changed = false;
+      const next = new Set();
+      for (const fp of prev) {
+        if (live.has(fp)) next.add(fp);
+        else changed = true;
+      }
+      return changed ? next : prev;
+    });
+  }, [images]);
+
+  // v0.49.39: close the "Copy" dropdown on outside click. Capture
+  // phase so a click on the dropdown trigger itself (which manages its
+  // own toggle) reaches us first and we don't re-close right after the
+  // open. Bail when the menu is closed to keep the listener cost zero
+  // in the common case.
+  useEffect(() => {
+    if (!copyMenuOpen) return undefined;
+    function onDocClick(e) {
+      // Anything tagged with [data-copy-menu] is part of the trigger
+      // or the menu itself — let the trigger toggle handle it.
+      if (e.target.closest && e.target.closest('[data-copy-menu]')) return;
+      setCopyMenuOpen(false);
+    }
+    document.addEventListener('mousedown', onDocClick);
+    return () => document.removeEventListener('mousedown', onDocClick);
+  }, [copyMenuOpen]);
 
   // v0.26.18: live-refresh the panel's image grid whenever ANY image
   // mutation hits the currently-displayed product. Previously the
@@ -424,6 +494,143 @@ export function ProductForm({ product, isCreating = false, onClose, onStartCreat
     }
   }
 
+  /* ─── v0.49.39: multi-image copy + drag-out helpers ────────────── */
+
+  // Toggle a single image's selection. The ImageTile checkbox calls
+  // this — passes the filepath. Toggling the selection of an image
+  // that's currently the only-selected one leaves the set empty,
+  // which auto-hides the selection toolbar (the JSX below tests
+  // size > 0). No animation; the toolbar just disappears.
+  function toggleImageSelected(filepath) {
+    setSelectedFilepaths((prev) => {
+      const next = new Set(prev);
+      if (next.has(filepath)) next.delete(filepath);
+      else next.add(filepath);
+      return next;
+    });
+  }
+
+  function clearImageSelection() {
+    setSelectedFilepaths(new Set());
+  }
+
+  function selectAllImages() {
+    setSelectedFilepaths(new Set(images.map((im) => im.filepath)));
+  }
+
+  // Pop the OS folder picker, copy the chosen filepaths there.
+  // `scope` is 'selected' | 'all' | 'main' — affects the filepath
+  // list AND the toast wording. The handler routes through one IPC
+  // (`images:copyImagesToFolder`) so the backend writer is the same
+  // path; we just preset which subset of images get included.
+  async function handleCopyImagesToFolder(scope) {
+    if (!activeProductId) return;
+    if (images.length === 0) {
+      addToast('No images on this product.', 'info');
+      return;
+    }
+    let filepaths;
+    if (scope === 'main') {
+      filepaths = [images[0].filepath];
+    } else if (scope === 'selected') {
+      filepaths = images
+        .filter((im) => selectedFilepaths.has(im.filepath))
+        .map((im) => im.filepath);
+      if (filepaths.length === 0) {
+        addToast('Select at least one image first.', 'info');
+        return;
+      }
+    } else { // 'all'
+      filepaths = images.map((im) => im.filepath);
+    }
+    setCopyingImages(true);
+    setCopyMenuOpen(false);
+    try {
+      const res = await window.api.images.copyImagesToFolder({
+        productId: activeProductId,
+        // Renderer passes the SKU directly so the main handler doesn't
+        // need to hit the DB — same code path works in standalone,
+        // server, AND client mode (no local DB available on a client).
+        sku: form.sku || 'product',
+        filepaths,
+      });
+      if (res?.canceled) {
+        // User cancelled the folder picker — silently exit; no toast,
+        // they made an explicit choice.
+        return;
+      }
+      const copied = res?.copied ?? 0;
+      const failed = (res?.failures || []).length;
+      if (copied > 0 && failed === 0) {
+        addToast(`Copied ${copied} image${copied === 1 ? '' : 's'} to ${res.folder}`, 'success');
+      } else if (copied > 0) {
+        addToast(`Copied ${copied}, ${failed} failed.`, 'info');
+      } else {
+        addToast('No images copied — see Crash log for details.', 'error');
+      }
+    } catch (err) {
+      addToast(`Copy failed: ${err.message}`, 'error');
+    } finally {
+      setCopyingImages(false);
+    }
+  }
+
+  // Drag handle's onDragStart. preventDefault() is REQUIRED — without
+  // it Chromium starts its OWN drag of the button's HTML and our IPC
+  // races against that, so we get a weird mixed drag (Chromium's HTML
+  // ghost + Electron's file drop) on some targets. preventDefault
+  // suppresses the default; we then prepareDrag (which downloads
+  // bytes to a temp dir in client mode, no-op resolve in standalone)
+  // and ask main to start a proper native multi-file drag via
+  // webContents.startDrag.
+  //
+  // v0.49.40 timing note: dragstart is fired by Chromium the moment
+  // the user has moved enough pixels with the button held. We
+  // preventDefault synchronously, then do async prep, then call
+  // startDragOut. The OS keeps the gesture alive while the user
+  // continues to hold the button — as long as startDragOut fires
+  // before the user releases the mouse, the native drag begins. On
+  // standalone this is sub-millisecond. On client with a fast
+  // Tailscale link, ~200–800ms for typical product image sizes.
+  async function handleDragOutStart(e, scope) {
+    e.preventDefault();
+    if (!activeProductId) return;
+    let filepaths;
+    if (scope === 'selected') {
+      filepaths = images
+        .filter((im) => selectedFilepaths.has(im.filepath))
+        .map((im) => im.filepath);
+    } else { // 'all'
+      filepaths = images.map((im) => im.filepath);
+    }
+    if (filepaths.length === 0) return;
+    setDraggingPrep(true);
+    try {
+      const prep = await window.api.images.prepareDrag(activeProductId, filepaths);
+      const paths = Array.isArray(prep?.files) ? prep.files : [];
+      if (paths.length === 0) {
+        addToast(
+          (prep?.failed?.[0]?.error)
+            ? `Drag prep failed: ${prep.failed[0].error}`
+            : 'Drag prep returned no files.',
+          'error',
+        );
+        return;
+      }
+      if (Array.isArray(prep.failed) && prep.failed.length) {
+        addToast(`Drag prepared with ${prep.failed.length} skipped (server unreachable).`, 'info');
+      }
+      window.api.images.startDragOut(paths);
+    } catch (err) {
+      // Likely client-mode network error or the server rejected the
+      // request. Surface plainly — the user's mouse is probably
+      // already released; no live drag to cancel.
+      addToast(`Drag prep failed: ${err.message}`, 'error');
+    } finally {
+      setDraggingPrep(false);
+    }
+  }
+
   async function handlePaste(e) {
     const items = Array.from(e.clipboardData?.items ?? []);
     const imageItem = items.find((it) => it.type.startsWith('image/'));
@@ -635,6 +842,61 @@ export function ProductForm({ product, isCreating = false, onClose, onStartCreat
                 })()}
               </span>
             </span>
+            {/* v0.49.39: "Copy ▾" dropdown — main / all / save to folder. Only
+                shows when there's at least one image (otherwise there's
+                nothing to copy). Sits next to "+ Add image" so the related
+                actions (write to grid / read out of grid) live together. */}
+            {activeProductId && images.length > 0 ? (
+              <div className="copy-menu" data-copy-menu>
+                <Button
+                  onClick={() => setCopyMenuOpen((v) => !v)}
+                  disabled={copyingImages}
+                  title="Save copies of these images to a folder"
+                  aria-expanded={copyMenuOpen}
+                  aria-haspopup="menu"
+                >
+                  {copyingImages ? 'Copying…' : 'Copy ▾'}
+                </Button>
+                {copyMenuOpen ? (
+                  <div className="copy-menu__panel" data-copy-menu role="menu">
+                    <button
+                      type="button"
+                      className="copy-menu__item"
+                      role="menuitem"
+                      onClick={() => handleCopyImagesToFolder('main')}
+                      disabled={copyingImages}
+                    >
+                      <span className="copy-menu__label">Save main image to folder…</span>
+                      <span className="copy-menu__hint">The first image only</span>
+                    </button>
+                    <button
+                      type="button"
+                      className="copy-menu__item"
+                      role="menuitem"
+                      onClick={() => handleCopyImagesToFolder('all')}
+                      disabled={copyingImages}
+                    >
+                      <span className="copy-menu__label">Save all {images.length} images to folder…</span>
+                      <span className="copy-menu__hint">Named {(form.sku || 'product').replace(/[^A-Za-z0-9._-]+/g, '-')}-001, -002, …</span>
+                    </button>
+                    <div className="copy-menu__sep" aria-hidden />
+                    <button
+                      type="button"
+                      className="copy-menu__item"
+                      role="menuitem"
+                      onClick={() => {
+                        selectAllImages();
+                        setCopyMenuOpen(false);
+                      }}
+                      disabled={copyingImages}
+                    >
+                      <span className="copy-menu__label">Select all for multi-action</span>
+                      <span className="copy-menu__hint">Tick boxes appear on each image — then Copy / Drag / Delete from the strip</span>
+                    </button>
+                  </div>
+                ) : null}
+              </div>
+            ) : null}
             <Button onClick={handleAddImage} disabled={!activeProductId || images.length >= MAX_IMAGES}>
               + Add image
             </Button>
@@ -644,6 +906,55 @@ export function ProductForm({ product, isCreating = false, onClose, onStartCreat
               ? `Paste images directly from clipboard (⌘V). Same image is detected and skipped automatically.`
               : `Save the product first, then add images.`}
           </p>
+          {/* v0.49.39: multi-select action strip. Appears only when the
+              user has ticked at least one image (selectAllImages() from
+              the Copy ▾ menu can also seed the selection). Three actions:
+                - "Copy selected to folder…" — folder picker + writes N
+                  files with the same clean naming as the dropdown's
+                  "Save all" option.
+                - "Drag selected" — multi-file native drag. Hidden in
+                  client mode where startDragOut is a no-op. The button
+                  is `draggable` and its onDragStart preventDefault()s
+                  Chromium's default drag so main can start a proper
+                  native one via webContents.startDrag.
+                - "Clear" — drops the selection. Same affordance as the
+                  Esc key would do if we wired one. */}
+          {selectedFilepaths.size > 0 ? (
+            <div className="image-select-bar">
+              <span className="image-select-bar__count">
+                {selectedFilepaths.size} selected
+              </span>
+              <Button
+                onClick={() => handleCopyImagesToFolder('selected')}
+                disabled={copyingImages}
+              >
+                {copyingImages ? 'Copying…' : 'Copy to folder…'}
+              </Button>
+              {/* v0.49.40: drag pill works in ALL modes now. In client
+                  mode the dragstart handler awaits a download from the
+                  server before the OS-level drag begins; the label
+                  changes to "Preparing N…" during that window so the
+                  user knows to keep their mouse held. */}
+              <button
+                type="button"
+                className={`image-select-bar__drag${draggingPrep ? ' is-prepping' : ''}`}
+                draggable
+                onDragStart={(e) => handleDragOutStart(e, 'selected')}
+                // Click is a no-op — the button only does anything
+                // during a drag gesture. Prevent default so the click
+                // doesn't accidentally submit a parent form.
+                onClick={(e) => e.preventDefault()}
+                title={appMode === 'client'
+                  ? 'Click and drag onto any drop target — files download from the server on demand'
+                  : 'Click and drag to copy these files to Finder, Mail, Slack, or any drop target'}
+              >
+                {draggingPrep
+                  ? `Preparing ${selectedFilepaths.size}…`
+                  : `⤴ Drag ${selectedFilepaths.size}`}
+              </button>
+              <Button onClick={clearImageSelection}>Clear</Button>
+            </div>
+          ) : null}
           {images.length === 0 ? (
             <div className="image-grid__empty">No images yet.</div>
           ) : (
@@ -671,6 +982,9 @@ export function ProductForm({ product, isCreating = false, onClose, onStartCreat
                   // hand the index back up.
                   onPreview={onPreview ? () => onPreview(i) : null}
                   onReframe={() => setReframeTarget(img)}
+                  // v0.49.39: multi-select state for this tile.
+                  selected={selectedFilepaths.has(img.filepath)}
+                  onToggleSelected={() => toggleImageSelected(img.filepath)}
                 />
               ))}
             </div>
@@ -747,7 +1061,7 @@ export function ProductForm({ product, isCreating = false, onClose, onStartCreat
   );
 }
 
-function ImageTile({ image, index, total, onSetMain, onMoveLeft, onMoveRight, onRemove, onPreview, onReframe }) {
+function ImageTile({ image, index, total, onSetMain, onMoveLeft, onMoveRight, onRemove, onPreview, onReframe, selected, onToggleSelected }) {
   // v0.22.9: cache-bust strictly. Order of preference for the
   // version stamp:
   //   1. image.contentHash — content-addressed, definitive.
@@ -773,7 +1087,28 @@ function ImageTile({ image, index, total, onSetMain, onMoveLeft, onMoveRight, on
   // are siblings outside this button so their own clicks aren't shadowed
   // — no stopPropagation gymnastics needed.
   return (
-    <div className={`image-tile${isMain ? ' is-main' : ''}`}>
+    <div className={`image-tile${isMain ? ' is-main' : ''}${selected ? ' is-selected' : ''}`}>
+      {/* v0.49.39: per-image multi-select checkbox. Sits top-LEFT so
+          it doesn't overlap the existing X remove (top-right) or the
+          Reframe button. Visible on hover OR when ANY image on the
+          product is selected (so the rest of the grid shows their
+          empty boxes too — Mac Finder pattern: once selection mode
+          starts, all targets become tickable). */}
+      {onToggleSelected ? (
+        <label
+          className="image-tile__check"
+          onClick={(e) => e.stopPropagation()}
+          title="Select for multi-action (Copy / Drag / Delete)"
+          aria-label={`Select image #${index + 1}`}
+        >
+          <input
+            type="checkbox"
+            checked={!!selected}
+            onChange={onToggleSelected}
+          />
+          <span className="image-tile__check-box" aria-hidden />
+        </label>
+      ) : null}
       {onPreview ? (
         <button
           type="button"

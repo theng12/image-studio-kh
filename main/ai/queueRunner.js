@@ -155,7 +155,10 @@ async function startOne(task) {
     if (model.supportsSource && task.sourceImagePath && !sourceUrl) {
       const srcAbs = absForRelative(task.sourceImagePath);
       if (!srcAbs) throw new Error(`Source image missing on disk: ${task.sourceImagePath}`);
-      const up = await provider(task.provider).uploadSource(apiKey, { absPath: srcAbs });
+      // v0.49.16: pass the model so the provider can opt out of the inline-
+      // data-URL shortcut for endpoints that require fetchable HTTPS URLs
+      // (notably fal-ai/gpt-image-2/edit-image).
+      const up = await provider(task.provider).uploadSource(apiKey, { absPath: srcAbs, model });
       sourceUrl = up.url;
       aiTasks.update(task.id, { providerSourceUrl: sourceUrl });
     }
@@ -348,7 +351,14 @@ async function onDone(task, outputUrls) {
         // tail because the user-visible side effects are the same.
         const wantPromote = !!task.options?.autoPromoteAsMain;
         const wantAdd     = wantPromote || !!task.options?.autoAddToProduct;
-        if (i === 1 && wantAdd && task.productId) {
+        // v0.48.0: split the gate. Promote-as-main MUST be first-variant-only
+        // so multi-variant runs don't repeatedly stomp the main image. Plain
+        // auto-add wants ALL variants saved as images on the product — every
+        // alternate becomes a real image the user can keep, set as main, or
+        // delete from the regular gallery. The mobile AI flow uses pure
+        // auto-add, which is why this gate matters now.
+        const variantEligible = wantPromote ? (i === 1) : true;
+        if (variantEligible && wantAdd && task.productId) {
           try {
             const productImages = require('../db/productImages');
             const products = require('../db/products');

@@ -5,6 +5,7 @@ const crypto = require('node:crypto');
 const sharp = require('sharp');
 const { getDataDir } = require('./db');
 const { slugify: baseSlugify } = require('./util/slug');
+const { ensureDecodablePath } = require('./util/heic');
 
 const IMAGE_EXTS = new Set(['.png', '.jpg', '.jpeg', '.webp']);
 // `ai-source` accepts inputs for AI Studio bulk mode and is kept at a
@@ -232,11 +233,18 @@ async function importProductImage(sourcePath, { destDirRel, baseName, existingHa
   }
   if (!destDirRel) throw new Error('destDirRel required');
   if (!baseName) throw new Error('baseName required');
-  const ext = path.extname(sourcePath).toLowerCase();
+
+  // v0.41.0: HEIC/HEIF (iPhone photos) can't be decoded by our sharp build,
+  // so transcode to a temp JPEG up front and import THAT. Non-HEIC inputs pass
+  // straight through (cleanup is null). The temp file is removed in `finally`.
+  const heicConv = await ensureDecodablePath(sourcePath);
+  const src = heicConv.path;
+  try {
+  const ext = path.extname(src).toLowerCase();
   if (!IMAGE_EXTS.has(ext)) {
     throw new Error(`Unsupported image type: ${ext}`);
   }
-  const hashFull = await sha1Hex(sourcePath);
+  const hashFull = await sha1Hex(src);
 
   // DB-level dedup: if a previous product_image with the same content
   // hash already exists for this product, reuse it. The caller's lookup
@@ -283,7 +291,7 @@ async function importProductImage(sourcePath, { destDirRel, baseName, existingHa
   }
 
   const max = KIND_MAX_DIMENSION.products;
-  const pipeline = sharp(sourcePath).rotate().resize({
+  const pipeline = sharp(src).rotate().resize({
     width: max,
     height: max,
     fit: 'inside',
@@ -302,6 +310,9 @@ async function importProductImage(sourcePath, { destDirRel, baseName, existingHa
     hash: hashFull,
     skipped: false,
   };
+  } finally {
+    heicConv.cleanup?.();
+  }
 }
 
 async function importProductImageFromBytes(buffer, ext, { destDirRel, baseName, existingHashLookup } = {}) {
@@ -433,7 +444,9 @@ function scanImagesRecursive(rootPath, maxDepth = SCAN_MAX_DEPTH) {
       if (entry.isDirectory()) walk(full, depth + 1);
       else if (entry.isFile()) {
         const ext = path.extname(entry.name).toLowerCase();
-        if (IMAGE_EXTS.has(ext)) results.push(full);
+        // v0.41.0: also pick up HEIC/HEIF (iPhone photos) — they're transcoded
+        // to JPEG when imported, so a folder dragged off a phone matches too.
+        if (IMAGE_EXTS.has(ext) || ext === '.heic' || ext === '.heif') results.push(full);
       }
     }
   }

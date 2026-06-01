@@ -16,8 +16,10 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Modal, Button, Field, Select, Textarea } from '../../components/ui.jsx';
 import { useAppStore } from '../../store/index.js';
+import { PromptLibraryModal } from '../AIStudio/PromptLibraryModal.jsx';
 
 export function BulkProductsAIRunModal({ open, productIds, onClose, onDone }) {
+  const activeCompanyId = useAppStore((s) => s.activeCompanyId);
   const aiModels = useAppStore((s) => s.aiModels);
   const aiPrompts = useAppStore((s) => s.aiPrompts);
   const refreshAiPrompts = useAppStore((s) => s.refreshAiPrompts);
@@ -38,6 +40,7 @@ export function BulkProductsAIRunModal({ open, productIds, onClose, onDone }) {
   const [nVariants, setNVariants] = useState(1);
   const [size, setSize] = useState('1:1');
   const [submitting, setSubmitting] = useState(false);
+  const [libraryOpen, setLibraryOpen] = useState(false);
 
   // Load model + prompt catalogs on first open.
   useEffect(() => {
@@ -126,6 +129,7 @@ export function BulkProductsAIRunModal({ open, productIds, onClose, onDone }) {
   const count = productIds?.length ?? 0;
 
   return (
+    <>
     <Modal
       open={open}
       title={`AI Studio · ${count} product${count === 1 ? '' : 's'}`}
@@ -139,16 +143,19 @@ export function BulkProductsAIRunModal({ open, productIds, onClose, onDone }) {
 
         <Field label="Prompt template (optional)">
           {({ id }) => (
-            <Select
-              id={id}
-              value={promptTemplateId}
-              onChange={(e) => pickTemplate(e.target.value)}
-            >
-              <option value="">— Start from blank —</option>
-              {(aiPrompts || []).map((t) => (
-                <option key={t.id} value={t.id}>{t.name}</option>
-              ))}
-            </Select>
+            <div className="bulk-ai-run__template-row">
+              <Select
+                id={id}
+                value={promptTemplateId}
+                onChange={(e) => pickTemplate(e.target.value)}
+              >
+                <option value="">— Start from blank —</option>
+                {(aiPrompts || []).map((t) => (
+                  <option key={t.id} value={t.id}>{t.name}</option>
+                ))}
+              </Select>
+              <Button onClick={() => setLibraryOpen(true)}>Browse library</Button>
+            </div>
           )}
         </Field>
 
@@ -246,5 +253,14 @@ export function BulkProductsAIRunModal({ open, productIds, onClose, onDone }) {
         </footer>
       </div>
     </Modal>
+
+    <PromptLibraryModal
+      open={libraryOpen}
+      companyId={activeCompanyId}
+      onClose={() => setLibraryOpen(false)}
+      onUse={(body) => setPromptText(body)}
+      onSaved={() => refreshAiPrompts()}
+    />
+    </>
   );
 }

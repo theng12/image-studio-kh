@@ -33,6 +33,24 @@ function register({ expose, assertEntityInActiveCompany, assertProductInActiveCo
     return assertEntityInActiveCompany(exportProfiles.get(id), 'Profile');
   });
 
+  // v0.36.0: catalog feed / CSV export. Pure data (no fs), so it returns
+  // the CSV text + a suggested filename; the renderer triggers the download
+  // (works in standalone, server, AND the iPad web viewer). format is
+  // 'generic' | 'shopify' | 'google'.
+  expose('exports:catalogCsv', ({ companyId, format } = {}) => {
+    if (companyId && companyId !== companies.getActiveId()) {
+      // Mirror the read-path scoping the other list handlers use.
+      return { csv: '', count: 0, filename: 'catalog.csv' };
+    }
+    const products = require('../db/products').list(companyId, {});
+    const brandsById = new Map(require('../db/brands').list(companyId).map((b) => [b.id, b]));
+    const categoriesById = new Map(require('../db/categories').list(companyId).map((c) => [c.id, c]));
+    const { buildCatalogCsv } = require('../util/catalogCsv');
+    const fmt = ['generic', 'shopify', 'google'].includes(format) ? format : 'generic';
+    const csv = buildCatalogCsv({ products, brandsById, categoriesById, format: fmt });
+    return { csv, count: products.length, filename: `catalog-${fmt}.csv` };
+  });
+
   // v0.15.0: export profile mutations exposed. The actual export
   // run stays local-only — see `exports:run` below.
   expose('exports:createProfile', (input) => {

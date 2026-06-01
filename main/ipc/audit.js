@@ -40,6 +40,13 @@ function register({ expose }) {
   expose('audit:countRecent', ({ entityType, userId } = {}) => {
     return auditLog.countRecent({ entityType, userId });
   });
+
+  // v0.33.0: history retention. stats() backs the "X events · oldest N
+  // days ago" line; clearHistory deletes rows older than `days` (or ALL
+  // when days <= 0). Runs server-side, so a client clearing history clears
+  // the shared log for everyone — same as any other write.
+  expose('audit:historyStats', () => auditLog.stats());
+  expose('audit:clearHistory', ({ days } = {}) => auditLog.clearOlderThan(days));
 }
 
 module.exports = { register };

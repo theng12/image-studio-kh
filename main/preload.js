@@ -30,8 +30,9 @@ contextBridge.exposeInMainWorld('api', {
      *  successful Change-folder + move. Refuses to trash the
      *  current data dir or any folder that doesn\'t look like ours. */
     trashFolder:            (path)             => invoke('settings:trashFolder', { path }),
-    testRemoveBg:           (apiKey)           => invoke('settings:testRemoveBg', { apiKey }),
-    bumpRemoveBgUsage:      ()                 => invoke('settings:bumpRemoveBgUsage'),
+    // v0.49.33: removed `testRemoveBg` + `bumpRemoveBgUsage`. The paid
+    // bg-removal engine was dropped; only the local @imgly engine remains
+    // and it doesn't need an API-key test or a per-call counter.
     /** v0.14.0: switch app mode (standalone/server/client). Triggers a relaunch. */
     setMode:                (mode)             => invoke('settings:setMode', mode),
   },
@@ -50,6 +51,19 @@ contextBridge.exposeInMainWorld('api', {
     previewBundle:        (bundlePath)                         => invoke('servers:previewBundle', bundlePath ? { bundlePath } : null),
     importBundle:         (bundlePath, targetDataDir)          => invoke('servers:importBundle', { bundlePath, targetDataDir }),
     applyImportedDataDir: (dataDir, relaunch = true)           => invoke('servers:applyImportedDataDir', { dataDir, relaunch }),
+  },
+  /** v0.49.31: local backup / restore. Local-only — no client-mode
+   *  equivalent (a client has no local data folder). Restore replaces
+   *  the data folder; the renderer confirms first + relaunches after. */
+  backups: {
+    create:     ()              => invoke('backups:create'),
+    list:       ()              => invoke('backups:list'),
+    last:       ()              => invoke('backups:last'),
+    preview:    (backupPath)    => invoke('backups:preview', { backupPath }),
+    reveal:     (backupPath)    => invoke('backups:reveal', { backupPath }),
+    openFolder: ()              => invoke('backups:openFolder'),
+    pickFolder: ()              => invoke('backups:pickFolder'),
+    restore:    (backupPath)    => invoke('backups:restore', { backupPath }),
   },
   client: {
     testConnection:    (url, token) => invoke('client:testConnection', { url, token }),
@@ -194,6 +208,37 @@ contextBridge.exposeInMainWorld('api', {
     // v0.29.0: per-image reframe (shrink within frame + fill margin).
     reframePreview:    (opts)                               => invoke('images:reframePreview', opts),
     reframeImage:      (opts)                               => invoke('images:reframeImage', opts),
+    // v0.49.15: aspect-ratio crop. `cropImage` accepts destination:
+    // 'newImage' (default — non-destructive, adds a cropped copy) or
+    // 'overwrite' (destructive, writes back to the source path).
+    cropPreview:       (opts)                               => invoke('images:cropPreview', opts),
+    cropImage:         (opts)                               => invoke('images:cropImage', opts),
+    // v0.37.0: batch auto-crop (trim + reframe every image of N products).
+    autoCropProducts:  (opts)                               => invoke('images:autoCropProducts', opts),
+    // v0.40.0: auto-enhance (white-balance + levels + saturation).
+    autoEnhancePreview:(opts)                               => invoke('images:autoEnhancePreview', opts),
+    autoEnhanceProducts:(opts)                              => invoke('images:autoEnhanceProducts', opts),
+    // v0.49.28: bulk format-convert + compression. One IPC because the
+    // underlying op is the same — sharp.toFormat() with knobs.
+    reencodeProducts:  (opts)                               => invoke('images:reencodeProducts', opts),
+    // v0.49.34: header-only metadata read (pixel dims, file size, format,
+    // hash). Used by the Lightbox to show the user what they're looking
+    // at without bouncing to Finder.
+    getMetadata:       (productId, filepath)                => invoke('images:getMetadata', { productId, filepath }),
+    // v0.49.39: multi-image copy + drag-out. v0.49.40 split the drag
+    // into prepareDrag + startDragOut so client-mode drag-out works
+    // (prepareDrag downloads files from the server into a temp dir;
+    // startDragOut kicks off the OS-level drag from those temp paths).
+    // In standalone/server mode prepareDrag is instant — it just
+    // resolves relative filepaths to absolute paths under assets/.
+    copyImagesToFolder:(opts)                               => invoke('images:copyImagesToFolder', opts),
+    prepareDrag:       (productId, filepaths) => invoke('images:prepareDrag', { productId, filepaths }),
+    startDragOut:      (preparedPaths) => {
+      // ipcRenderer.send because the main side uses ipcMain.on (no
+      // reply expected — startDrag synchronously blocks the OS until
+      // the drag completes).
+      ipcRenderer.send('images:startDragOut', { preparedPaths });
+    },
     sampleImageBgColor:(productId, filepath)                => invoke('images:sampleImageBgColor', { productId, filepath }),
   },
   brands: {
@@ -238,6 +283,8 @@ contextBridge.exposeInMainWorld('api', {
     checkCollisions: (profileId, productIds, outputRoot) =>
       invoke('exports:checkCollisions', { profileId, productIds, outputRoot }),
     listRuns: (limit) => invoke('exports:listRuns', limit),
+    // v0.36.0: catalog CSV/feed export. Returns { csv, count, filename }.
+    catalogCsv: (companyId, format) => invoke('exports:catalogCsv', { companyId, format }),
   },
   /** v0.18.2: global search across products / brands / categories
    *  for the active company. Used by the Cmd+K palette. */
@@ -248,6 +295,7 @@ contextBridge.exposeInMainWorld('api', {
     stats:          (companyId)          => invoke('dashboard:stats', companyId),
     recentBrands:   (companyId, limit)   => invoke('dashboard:recentBrands',   { companyId, limit }),
     recentProducts: (companyId, limit)   => invoke('dashboard:recentProducts', { companyId, limit }),
+    completeness:   (companyId)          => invoke('dashboard:completeness', companyId),
   },
   /** v0.22.6: per-entity edit history feed. The side-panel History
    *  modal calls listForEntity(); listForEntity for entityType='product'
@@ -262,6 +310,10 @@ contextBridge.exposeInMainWorld('api', {
     // — all optional; empty call returns the most recent 100.
     listRecent:  (opts) => invoke('audit:listRecent',  opts ?? {}),
     countRecent: (opts) => invoke('audit:countRecent', opts ?? {}),
+    // v0.33.0: history retention. stats() → { total, oldest, newest };
+    // clearHistory(days) deletes rows older than `days` (0/undefined = all).
+    historyStats: () => invoke('audit:historyStats'),
+    clearHistory: (days) => invoke('audit:clearHistory', { days }),
   },
   templates: {
     /* Overlay Studio — global templates that composite text/barcode/image

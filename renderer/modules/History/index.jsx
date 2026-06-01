@@ -31,6 +31,7 @@ import { useAppStore } from '../../store/index.js';
 import { PageHeader } from '../../components/PageHeader.jsx';
 import { Button, EmptyState, Pagination, Select } from '../../components/ui.jsx';
 import { HistoryModal } from '../../components/HistoryModal.jsx';
+import { confirm } from '../../components/ConfirmModal.jsx';
 
 const DEFAULT_PAGE_SIZE = 50;
 
@@ -99,6 +100,8 @@ export function History() {
   // HistoryModal scoped to that product/brand. Keeps the cross-entity
   // overview and the deep-dive on separate surfaces.
   const [entityModal, setEntityModal] = useState(null); // { entityType, entityId, title } | null
+  // v0.33.0: bump to force the load effect to re-run (after a clear).
+  const [reloadNonce, setReloadNonce] = useState(0);
 
   // Reset to page 1 when the filter changes.
   useEffect(() => { setPage(0); }, [entityType]);
@@ -125,7 +128,31 @@ export function History() {
       })
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
-  }, [page, pageSize, entityType, addToast]);
+  }, [page, pageSize, entityType, addToast, reloadNonce]);
+
+  // v0.33.0: clear / retention. days > 0 deletes entries older than that
+  // many days; days === 0 wipes the whole log. Runs server-side, so it
+  // clears the shared history for every connected Mac.
+  async function handleClearHistory(days) {
+    const ok = await confirm({
+      title: days > 0 ? `Clear history older than ${days} days?` : 'Clear ALL history?',
+      message: days > 0
+        ? `Permanently deletes every audit-log entry older than ${days} days. Recent activity is kept.`
+        : 'Permanently deletes the ENTIRE history log for every company.',
+      detail: 'This affects the shared log on the server — every connected Mac. It can\'t be undone.',
+      confirmLabel: days > 0 ? `Clear older than ${days}d` : 'Clear everything',
+      danger: true,
+    });
+    if (!ok) return;
+    try {
+      const res = await window.api.audit.clearHistory(days);
+      addToast(`Cleared ${res.deleted} history entr${res.deleted === 1 ? 'y' : 'ies'}`, 'success');
+      setPage(0);
+      setReloadNonce((n) => n + 1);
+    } catch (err) {
+      addToast(err.message, 'error');
+    }
+  }
 
   // Build lookup indexes once per data slice so each row render is O(1).
   // allProducts is preferred because it spans all companies — the global
@@ -215,6 +242,26 @@ export function History() {
               setPage(-1);
               setTimeout(() => setPage(cur), 0);
             }}>Refresh</Button>
+            {/* v0.33.0: retention / clear. Picking an option confirms then
+                deletes; the Select snaps back to its placeholder so the
+                same option can be re-picked. */}
+            <Select
+              value=""
+              aria-label="Clear history"
+              title="Delete old audit-log entries to keep the history (and the database) tidy."
+              onChange={(e) => {
+                const v = e.target.value;
+                e.target.value = '';
+                if (v === '') return;
+                handleClearHistory(v === 'all' ? 0 : Number(v));
+              }}
+            >
+              <option value="">Clear history…</option>
+              <option value="15">Older than 15 days</option>
+              <option value="30">Older than 30 days</option>
+              <option value="90">Older than 90 days</option>
+              <option value="all">Everything</option>
+            </Select>
           </>
         }
       />

@@ -103,22 +103,63 @@ const MODELS = [
   // newer `kie:flux-2-pro-image-to-image` above.
 
   // ───── fal.ai · queue API ─────
+  // v0.49.25: fal moved GPT Image-2 to a new namespace, `openai/gpt-image-2/*`.
+  // The old `fal-ai/gpt-image-2/*` endpoints still respond, but the new ones
+  // are the officially-documented ones (per
+  // https://fal.ai/models/openai/gpt-image-2/edit). New models added below;
+  // legacy entries kept for in-flight queued tasks but marked deprecated.
+  //
+  // v0.49.16 notes still apply to BOTH old and new endpoints:
+  //   1. `image_urls` rejects inline base64 data URLs — must use fal storage.
+  //   2. `image_size` is a tight enum — we map W:H labels in submit().
+  {
+    key: 'openai/gpt-image-2/edit',
+    provider: 'fal',
+    displayName: 'GPT Image-2 · Edit',
+    family: 'Image edit',
+    description: "OpenAI's GPT Image-2 — fine-grained image edits with auto-sized output. Replaces the legacy `fal-ai/gpt-image-2/edit-image`.",
+    supportsSource: true,
+    sourceParam: 'image_urls',
+    // v0.49.26: full set per fal\'s actual error message enumeration.
+    // Internally these map to fal\'s `square_hd` / `landscape_4_3` etc.
+    sizes: ['auto', '1:1', '4:3', '3:4', '16:9', '9:16'],
+    qualities: ['auto', 'low', 'medium', 'high'], // ~6× cost spread between low and high
+    requiresFalStorage: true,
+  },
+  {
+    key: 'openai/gpt-image-2',
+    provider: 'fal',
+    displayName: 'GPT Image-2 · Text-to-Image',
+    family: 'Text-to-image',
+    description: "OpenAI's GPT Image-2 — prompt-only generation. Replaces the legacy `fal-ai/gpt-image-2/text-to-image`.",
+    supportsSource: false,
+    sizes: ['auto', '1:1', '4:3', '3:4', '16:9', '9:16'],
+    qualities: ['auto', 'low', 'medium', 'high'],
+  },
+  // Legacy endpoints — kept so already-queued tasks still resolve to a model
+  // entry (the queue runner looks up by key) and the cost estimator still
+  // returns a number. NOT in the picker because of the `deprecated` flag.
   {
     key: 'fal-ai/gpt-image-2/edit-image',
     provider: 'fal',
-    displayName: 'fal · GPT Image-2 · Edit',
+    displayName: 'fal · GPT Image-2 · Edit (legacy)',
     family: 'Image edit',
-    description: "OpenAI's GPT Image-2 via fal — best fidelity image edit. If fal hasn't enabled this endpoint on your account yet, use kie's GPT Image-2 above (same model, different host).",
+    description: "Legacy endpoint — superseded by `openai/gpt-image-2/edit` (v0.49.25).",
     supportsSource: true,
     sourceParam: 'image_urls',
+    sizes: ['auto', '1:1', '4:3', '3:4'],
+    requiresFalStorage: true,
+    deprecated: true,
   },
   {
     key: 'fal-ai/gpt-image-2/text-to-image',
     provider: 'fal',
-    displayName: 'fal · GPT Image-2 · Text-to-Image',
+    displayName: 'fal · GPT Image-2 · Text-to-Image (legacy)',
     family: 'Text-to-image',
-    description: "OpenAI's GPT Image-2 via fal — prompt-only generation.",
+    description: "Legacy endpoint — superseded by `openai/gpt-image-2` (v0.49.25).",
     supportsSource: false,
+    sizes: ['auto', '1:1', '4:3', '3:4'],
+    deprecated: true,
   },
   {
     key: 'fal-ai/nano-banana/edit',

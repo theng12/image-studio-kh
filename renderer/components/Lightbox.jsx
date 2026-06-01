@@ -1,5 +1,6 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { appImageSrc } from '../lib/imageUrl.js';
+import { exportSpinVideo } from '../lib/spinExport.js';
 
 /**
  * Full-screen image preview overlay. Shows one image at a time with
@@ -43,6 +44,16 @@ export function Lightbox({ open, onClose, images, startIndex = 0, title, product
   // flight so the user can't fire a second flip that races against
   // the file rename.
   const [flipState, setFlipState] = useState('idle');
+  // v0.42.0: 360° spin mode. When on, the stage becomes drag-to-rotate
+  // (horizontal drag scrubs through the product's ordered images as frames)
+  // and a play/pause auto-rotates. Reuses `idx` as the current frame, so the
+  // existing prev/next + arrow keys still work. Needs ≥2 images to be useful.
+  const [spin, setSpin] = useState(false);
+  const [playing, setPlaying] = useState(false);
+  const dragRef = useRef(null); // { startX, startIdx } while a drag is active
+  // v0.43.0: spin video export. `exportState` is null / { stage, ratio }
+  // where stage ∈ {'load','render'} mirrors the encoder's onProgress.
+  const [exportState, setExportState] = useState(null);
   // v0.26.27: pending-flip preview state. Two booleans because the
   // user can toggle both axes independently (H, V, or both). When
   // EITHER is true, the displayed <img> gets a CSS transform but
@@ -52,6 +63,13 @@ export function Lightbox({ open, onClose, images, startIndex = 0, title, product
   // see which orientation reads better before re-encoding the JPEG.
   const [pendingFlipH, setPendingFlipH] = useState(false);
   const [pendingFlipV, setPendingFlipV] = useState(false);
+  // v0.49.34: per-image metadata for the caption row at the bottom
+  // of the stage. Keyed by `${filepath}::${effectiveHash}` so that a
+  // post-edit cache-bust also re-fetches metadata (otherwise the
+  // user would see "2000×3000 · 1.4 MB" still showing for an image
+  // they just resized to 1000×1500). null while loading or unsupported
+  // (older preload without `images.getMetadata` → caption silently hidden).
+  const [metaCache, setMetaCache] = useState({});
   // Reset pending state whenever the displayed image changes
   // (navigate via arrow keys / nav buttons, or open the lightbox at
   // a new startIndex). Without this, you'd flip image #1, hit →,
@@ -72,6 +90,86 @@ export function Lightbox({ open, onClose, images, startIndex = 0, title, product
   useEffect(() => {
     if (!open) setHashOverrides({});
   }, [open]);
+
+  // v0.42.0: reset spin state whenever the modal closes (or the image set
+  // changes to something with <2 frames, where spin is meaningless).
+  useEffect(() => {
+    if (!open || (images?.length ?? 0) < 2) { setSpin(false); setPlaying(false); }
+  }, [open, images?.length]);
+
+  // v0.42.0: auto-rotate while playing. Advances one frame ~9fps; loops.
+  useEffect(() => {
+    if (!open || !spin || !playing || (images?.length ?? 0) < 2) return undefined;
+    const id = setInterval(() => {
+      setIdx((i) => (i + 1) % images.length);
+    }, 110);
+    return () => clearInterval(id);
+  }, [open, spin, playing, images?.length]);
+
+  // v0.42.0: preload every frame when spin turns on so dragging/rotating is
+  // smooth instead of flickering as each frame fetches on first reveal.
+  useEffect(() => {
+    if (!open || !spin || !images) return undefined;
+    const imgs = images.map((im) => {
+      const el = new Image();
+      el.src = appImageSrc(im.filepath, im.contentHash || im.id || im.filepath);
+      return el;
+    });
+    return () => { imgs.forEach((el) => { el.src = ''; }); };
+  }, [open, spin, images]);
+
+  // v0.49.36 HOTFIX — derive `current` / `effectiveHash` BEFORE the
+  // metadata-fetch effect that references them. In v0.49.34/35 these
+  // `const`s lived AFTER the hooks (and after the `if (!open) return null`
+  // early-return), so when React evaluated the effect's deps array on
+  // every render, it tried to read `current` from the TDZ — crashing the
+  // Library page on mount (which mounts the Lightbox with `open={false}`,
+  // so the hook still runs even when the user can't see the lightbox).
+  // The crash surfaced as `"Cannot access 'w' before initialization"`
+  // (minified name). Order: state hooks → derive `current` / `effectiveHash`
+  // → all effect hooks (including the one that needs them in deps) →
+  // early-return → JSX. `images?.[idx]` is safe when images is empty.
+  const current = images?.[idx];
+  // v0.22.9: cache-bust by contentHash → id → filepath. Filepath
+  // alone is broken because renumberFiles recycles paths across
+  // rows after a delete/reorder. See ImageTile in ProductForm.jsx
+  // for the long-form explanation. v0.26.14 adds the per-session
+  // hashOverrides lookup so a freshly-flipped image cache-busts
+  // immediately, ahead of any parent re-fetch.
+  const effectiveHash = hashOverrides[current?.filepath] || current?.contentHash || current?.id || current?.filepath;
+
+  // v0.49.34: fetch image metadata for the caption row whenever the
+  // current slide changes (or its content hash changes — that's how a
+  // flip / resize / re-encode invalidates the row). Three guards:
+  //   - productId is required by the IPC. AI gallery's lightbox doesn't
+  //     pass productId, so metadata silently stays hidden — fine.
+  //   - The cache check skips re-fetching for the same (filepath, hash)
+  //     pair. Important so navigating away and back to the same slide
+  //     doesn't re-hit IPC unnecessarily.
+  //   - Older preloads without `images.getMetadata` get a soft skip
+  //     (typeof check) so the lightbox doesn't blow up on a stale build.
+  useEffect(() => {
+    if (!open || !current?.filepath || !productId) return undefined;
+    if (typeof window?.api?.images?.getMetadata !== 'function') return undefined;
+    const fp = current.filepath;
+    const key = `${fp}::${effectiveHash}`;
+    if (metaCache[key]) return undefined;
+    let cancelled = false;
+    (async () => {
+      try {
+        const m = await window.api.images.getMetadata(productId, fp);
+        if (!cancelled) setMetaCache((prev) => ({ ...prev, [key]: m }));
+      } catch (_) {
+        // Non-fatal — the caption is a nice-to-have. Leaving the key
+        // unset lets a future open retry without sticky-bad state.
+      }
+    })();
+    return () => { cancelled = true; };
+    // metaCache intentionally omitted from deps — we only want the
+    // effect to re-fire when slide / hash changes, not when the cache
+    // grows. The `metaCache[key]` check above guards the same key.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, current?.filepath, effectiveHash, productId]);
 
   useEffect(() => {
     if (!open) return undefined;
@@ -104,15 +202,16 @@ export function Lightbox({ open, onClose, images, startIndex = 0, title, product
 
   if (!open || !images || images.length === 0) return null;
 
-  const current = images[idx];
-  // v0.22.9: cache-bust by contentHash → id → filepath. Filepath
-  // alone is broken because renumberFiles recycles paths across
-  // rows after a delete/reorder. See ImageTile in ProductForm.jsx
-  // for the long-form explanation. v0.26.14 adds the per-session
-  // hashOverrides lookup so a freshly-flipped image cache-busts
-  // immediately, ahead of any parent re-fetch.
-  const effectiveHash = hashOverrides[current?.filepath] || current?.contentHash || current?.id || current?.filepath;
+  // v0.49.36: `current` + `effectiveHash` are derived above (so the
+  // metadata useEffect's deps array can read them without a TDZ). The
+  // rest of the render-only derivations stay here — they're consumed
+  // only inside the JSX below, not by any hook.
   const src = appImageSrc(current?.filepath, effectiveHash);
+  // v0.49.34: metadata cache key includes the hash so a flip / resize /
+  // re-encode invalidates the cached row automatically (same filepath,
+  // different bytes → new key → re-fetch).
+  const metaKey = current?.filepath ? `${current.filepath}::${effectiveHash}` : null;
+  const meta = metaKey ? metaCache[metaKey] : null;
 
   // Flip is only available when (a) the parent supplied productId
   // and (b) the IPC is exposed (preload wires it in v0.26.14+). The
@@ -166,6 +265,62 @@ export function Lightbox({ open, onClose, images, startIndex = 0, title, product
     setPendingFlipV(false);
   }
 
+  // v0.42.0: drag-to-rotate. ~26px of horizontal drag = one frame. Dragging
+  // LEFT advances (object spins toward you), matching every 360° viewer.
+  const SPIN_PX_PER_FRAME = 26;
+  function onSpinPointerDown(e) {
+    if (!spin || !images || images.length < 2) return;
+    setPlaying(false); // grabbing it pauses auto-rotate
+    dragRef.current = { startX: e.clientX, startIdx: idx };
+    try { e.currentTarget.setPointerCapture(e.pointerId); } catch (_) {}
+  }
+  function onSpinPointerMove(e) {
+    const d = dragRef.current;
+    if (!d || !images || images.length < 2) return;
+    const deltaFrames = Math.round(-(e.clientX - d.startX) / SPIN_PX_PER_FRAME);
+    const n = images.length;
+    setIdx(((d.startIdx + deltaFrames) % n + n) % n);
+  }
+  function onSpinPointerUp(e) {
+    dragRef.current = null;
+    try { e.currentTarget.releasePointerCapture(e.pointerId); } catch (_) {}
+  }
+
+  // v0.43.0: encode the spin to MP4 (or WebM fallback) and trigger a download.
+  // Frame URLs come from the same appImageSrc() the spin viewer uses, so the
+  // encoded file is byte-aligned with what the user sees on screen.
+  async function handleExportSpin() {
+    if (!images || images.length < 2 || exportState) return;
+    setPlaying(false);
+    const urls = images.map((im) => appImageSrc(im.filepath, im.contentHash || im.id || im.filepath));
+    // Filename from the lightbox title (usually "SKU · Name"); fall back to "spin".
+    const skuRaw = (title || '').split('·')[0].trim() || 'spin';
+    const safeSku = skuRaw.replace(/[^A-Za-z0-9._-]+/g, '-').replace(/^-+|-+$/g, '') || 'spin';
+    setExportState({ stage: 'load', ratio: 0 });
+    try {
+      const out = await exportSpinVideo(urls, {
+        fps: 12,
+        loops: 2,
+        maxSide: 1024,
+        format: 'mp4',
+        onProgress: (stage, ratio) => setExportState({ stage, ratio }),
+      });
+      const url = URL.createObjectURL(out.blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${safeSku}-spin.${out.ext}`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      // Defer revoke a tick so Chromium can pick the blob up before we drop it.
+      setTimeout(() => URL.revokeObjectURL(url), 0);
+    } catch (err) {
+      window.alert(`Spin export failed: ${err.message}`);
+    } finally {
+      setExportState(null);
+    }
+  }
+
   const hasPendingFlip = pendingFlipH || pendingFlipV;
   // CSS transform composed from the two booleans. scaleX(-1) =
   // mirror left↔right; scaleY(-1) = mirror top↕bottom. Both =
@@ -188,8 +343,47 @@ export function Lightbox({ open, onClose, images, startIndex = 0, title, product
         {title ? <div className="lightbox__title">{title}</div> : null}
         <div className="lightbox__counter">
           {idx + 1} / {images.length}
-          {current?.filename ? <span className="lightbox__filename"> · {current.filename}</span> : null}
+          {spin ? <span className="lightbox__filename"> · 360° spin</span>
+            : (current?.filename ? <span className="lightbox__filename"> · {current.filename}</span> : null)}
         </div>
+        {images.length > 1 ? (
+          <div className="lightbox__spin-controls">
+            <button
+              type="button"
+              className={`lightbox__spinbtn${spin ? ' is-active' : ''}`}
+              onClick={() => { setSpin((s) => !s); setPlaying(false); }}
+              title="Spin 360° — drag left/right over the image to rotate through its angle shots"
+              aria-pressed={spin}
+            >
+              <SpinIcon />
+              <span>360° Spin</span>
+            </button>
+            {spin ? (
+              <button
+                type="button"
+                className="lightbox__spinbtn"
+                onClick={() => setPlaying((p) => !p)}
+                title={playing ? 'Pause auto-rotate' : 'Auto-rotate'}
+                aria-pressed={playing}
+              >
+                {playing ? 'Pause' : 'Play'}
+              </button>
+            ) : null}
+            {spin ? (
+              <button
+                type="button"
+                className="lightbox__spinbtn"
+                onClick={handleExportSpin}
+                disabled={!!exportState}
+                title="Encode the spin as a video file (MP4, or WebM fallback) and download it. Two loops at 12fps."
+              >
+                {exportState
+                  ? `${exportState.stage === 'load' ? 'Loading' : 'Encoding'} ${Math.round(exportState.ratio * 100)}%`
+                  : 'Export'}
+              </button>
+            ) : null}
+          </div>
+        ) : null}
       </div>
 
       {/* v0.26.27: preview-then-apply flip toolbar. Replaces the
@@ -265,12 +459,20 @@ export function Lightbox({ open, onClose, images, startIndex = 0, title, product
         >‹</button>
       ) : null}
 
-      <div className="lightbox__stage" onClick={(e) => e.stopPropagation()}>
+      <div
+        className={`lightbox__stage${spin ? ' lightbox__stage--spin' : ''}`}
+        onClick={(e) => e.stopPropagation()}
+        onPointerDown={spin ? onSpinPointerDown : undefined}
+        onPointerMove={spin ? onSpinPointerMove : undefined}
+        onPointerUp={spin ? onSpinPointerUp : undefined}
+        onPointerCancel={spin ? onSpinPointerUp : undefined}
+      >
         {src ? (
           <img
             className="lightbox__image"
             src={src}
             alt={current.filename ?? ''}
+            draggable={false}
             // v0.26.27: in-memory preview of the pending flip. The
             // file on disk is unchanged until Apply is clicked; this
             // is purely visual so the user can compare orientations
@@ -280,7 +482,23 @@ export function Lightbox({ open, onClose, images, startIndex = 0, title, product
         ) : (
           <div className="lightbox__placeholder">No image</div>
         )}
+        {spin ? (
+          <div className="lightbox__spin-hint">↤ drag to rotate ↦</div>
+        ) : null}
       </div>
+
+      {/* v0.49.34: image metadata caption — dimensions, file size, format,
+          short content hash. Sits below the stage so it doesn't fight the
+          preview. Only renders when productId is set (Library is the only
+          caller that passes it; AI gallery's lightbox stays uncluttered).
+          The caption shows "Loading…" briefly on slide change while the
+          IPC roundtrips — typically <10 ms locally, longer over the LAN in
+          client mode but still well under a second. */}
+      {productId ? (
+        <div className="lightbox__caption" onClick={(e) => e.stopPropagation()}>
+          {renderMetaCaption(meta)}
+        </div>
+      ) : null}
 
       {images.length > 1 ? (
         <button
@@ -292,6 +510,41 @@ export function Lightbox({ open, onClose, images, startIndex = 0, title, product
       ) : null}
     </div>
   );
+}
+
+// v0.49.34: caption pieces. Kept module-level so they don't allocate on
+// every render. `null` meta (still loading) renders a thin placeholder
+// instead of jumping the layout when the data arrives.
+function renderMetaCaption(meta) {
+  if (!meta) {
+    return <span className="lightbox__caption-loading">…</span>;
+  }
+  if (!meta.exists) {
+    return <span className="lightbox__caption-missing">File missing on disk</span>;
+  }
+  const dims = (meta.width && meta.height) ? `${meta.width} × ${meta.height}` : null;
+  const size = Number.isFinite(meta.fileSize) ? formatBytes(meta.fileSize) : null;
+  const fmt = meta.format ? meta.format.toUpperCase() : null;
+  const mp = (meta.width && meta.height)
+    ? `${((meta.width * meta.height) / 1_000_000).toFixed(1)} MP`
+    : null;
+  const alpha = meta.hasAlpha ? 'alpha' : null;
+  const hash = meta.contentHash ? `sha:${String(meta.contentHash).slice(0, 8)}` : null;
+  const parts = [dims, mp, size, fmt, alpha, hash].filter(Boolean);
+  return parts.map((p, i) => (
+    <span key={i} className="lightbox__caption-part">
+      {i > 0 ? <span className="lightbox__caption-sep" aria-hidden> · </span> : null}
+      {p}
+    </span>
+  ));
+}
+
+function formatBytes(n) {
+  if (!Number.isFinite(n) || n <= 0) return '0 B';
+  const units = ['B', 'KB', 'MB', 'GB'];
+  let i = 0; let v = n;
+  while (v >= 1024 && i < units.length - 1) { v /= 1024; i += 1; }
+  return `${v.toFixed(v >= 100 || i === 0 ? 0 : 1)} ${units[i]}`;
 }
 
 // Inline SVG icons (per CLAUDE.md §16 — no icon library). 16px,
@@ -311,6 +564,15 @@ function FlipVIcon() {
       <path d="M2 8h12" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
       <path d="M5 3l3-2 3 2" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
       <path d="M5 13l3 2 3-2" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+function SpinIcon() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+      <ellipse cx="8" cy="8" rx="6.5" ry="3" stroke="currentColor" strokeWidth="1.3" />
+      <path d="M2.2 6.6A6.6 3 0 0 0 8 11" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" />
+      <path d="M3.4 4.3l-1.2 2.3 2.4.6" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" />
     </svg>
   );
 }

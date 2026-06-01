@@ -269,6 +269,44 @@ function countRecent({ entityType = null, userId = null } = {}) {
   return Number(row?.n ?? 0);
 }
 
+/**
+ * v0.33.0: total count + age span of the whole audit_log, for the
+ * History page's "X events, oldest N days ago" line + to gate the clear
+ * button. Cheap (COUNT + MIN/MAX on the created_at index).
+ */
+function stats() {
+  const db = getDb();
+  const row = db
+    .prepare('SELECT COUNT(*) AS n, MIN(created_at) AS oldest, MAX(created_at) AS newest FROM audit_log')
+    .get();
+  return {
+    total: Number(row?.n ?? 0),
+    oldest: row?.oldest ?? null,
+    newest: row?.newest ?? null,
+  };
+}
+
+/**
+ * v0.33.0: retention sweep / manual clear. Deletes audit_log rows older
+ * than `days` (e.g. 15 / 30 / 90). `days <= 0` (or non-numeric) clears the
+ * ENTIRE log. Returns the number of rows removed.
+ *
+ * Note: SQLite doesn't shrink the DB file on DELETE — the freed pages are
+ * reused by future writes. That's fine for a log table; we don't VACUUM
+ * (it would lock the DB and isn't worth the stall on a shared server).
+ */
+function clearOlderThan(days) {
+  const db = getDb();
+  const n = Number(days);
+  if (!Number.isFinite(n) || n <= 0) {
+    const info = db.prepare('DELETE FROM audit_log').run();
+    return { deleted: info.changes };
+  }
+  const cutoff = Date.now() - n * 24 * 60 * 60 * 1000;
+  const info = db.prepare('DELETE FROM audit_log WHERE created_at < ?').run(cutoff);
+  return { deleted: info.changes };
+}
+
 module.exports = {
   log,
   logUpdate,
@@ -277,4 +315,6 @@ module.exports = {
   countForEntity,
   listRecent,
   countRecent,
+  stats,
+  clearOlderThan,
 };

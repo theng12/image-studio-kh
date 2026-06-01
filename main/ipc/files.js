@@ -43,7 +43,8 @@ function register(/* helpers — unused */) {
     const res = await dialog.showOpenDialog({
       properties: ['openFile', ...(multiple ? ['multiSelections'] : [])],
       filters: [
-        { name: 'Images', extensions: ['jpg', 'jpeg', 'png', 'webp'] },
+        // v0.41.0: allow HEIC/HEIF (iPhone photos) — converted to JPEG on import.
+        { name: 'Images', extensions: ['jpg', 'jpeg', 'png', 'webp', 'heic', 'heif'] },
       ],
     });
     if (res.canceled || res.filePaths.length === 0) return null;

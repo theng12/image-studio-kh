@@ -67,10 +67,10 @@ export function createBootstrapSlice(set, get) {
         platform,
         activeCompanyId: activeId,
         theme,
-        appConfig: {
-          bgRemovalEngine: settings?.bgRemovalEngine ?? 'local',
-          removeBgApiKey: settings?.removeBgApiKey ?? null,
-        },
+        // v0.49.33: dropped bgRemovalEngine + removeBgApiKey along with
+        // the paid bg-removal engine. The object stays so future mirrored
+        // config can be added back here without re-introducing the field.
+        appConfig: {},
         dataDirIsCloud: !!settings?.dataDirIsCloud,
         appMode: settings?.mode ?? 'standalone',
         ...(savedModel ? { aiSelectedModelKey: savedModel } : {}),

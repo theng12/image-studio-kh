@@ -232,6 +232,15 @@ async function rpc(channel, args) {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: auth },
         body: requestBody,
+        // v0.32.0: every other fetch here has a timeout EXCEPT this one —
+        // so a stalled call (slow Tailscale hop, server mid-GC, a response
+        // that starts then hangs) blocked forever. That's the "first sync
+        // stuck at 29.7 KB" + "CSV import never finishes" symptom: one hung
+        // call freezes the whole bootstrap await-chain with no error. 120s
+        // is generous for a big bulkUpsert / full product list, but finite,
+        // so a genuine stall now rejects → the chip turns red + the UI
+        // recovers instead of spinning forever.
+        signal: AbortSignal.timeout(120_000),
       });
     } catch (err) {
       // Network-level failure → flag disconnected so the sidebar chip can
@@ -581,10 +590,13 @@ const PROXIED_CHANNELS = [
   'dashboard:stats',
   'dashboard:recentBrands',
   'dashboard:recentProducts',
+  'dashboard:completeness',
   'exports:listProfiles',
   'exports:getProfile',
   'exports:filenamePreview',
   'exports:listRuns',
+  // v0.36.0: catalog CSV/feed (pure data; renderer downloads it).
+  'exports:catalogCsv',
   'ai:listModels',
   'ai:estimateCost',
   'ai:listPrompts',
@@ -611,6 +623,8 @@ const PROXIED_CHANNELS = [
   'audit:listForEntity', 'audit:countForEntity',
   // v0.26.31: global feed for the History sidebar page.
   'audit:listRecent', 'audit:countRecent',
+  // v0.33.0: history retention — stats + clear run on the server's log.
+  'audit:historyStats', 'audit:clearHistory',
   'brands:create',    'brands:update',    'brands:remove',
   'categories:create','categories:update','categories:remove',
   'ai:createPrompt','ai:updatePrompt','ai:removePrompt',
@@ -628,6 +642,29 @@ const PROXIED_CHANNELS = [
   'images:revertMerge','images:purgeMerge','images:quarantineInfo','images:purgeAllMerges',
   // v0.29.0: per-image reframe — server holds the image bytes, so proxy.
   'images:reframePreview','images:reframeImage','images:sampleImageBgColor',
+  // v0.49.15: aspect-ratio crop — both preview + commit run on the server
+  // (where the actual image pixels live).
+  'images:cropPreview','images:cropImage',
+  // v0.37.0: batch auto-crop runs entirely on the server (where the files are).
+  'images:autoCropProducts',
+  // v0.40.0: auto-enhance (preview + batch) — server holds the bytes.
+  'images:autoEnhancePreview','images:autoEnhanceProducts',
+  // v0.49.28: bulk re-encode (format convert + compress) — server-side.
+  'images:reencodeProducts',
+  // v0.49.34: header-only metadata read for the Lightbox caption.
+  // Hits sharp().metadata() + fs.stat on the server; same row data
+  // either way, so proxy.
+  'images:getMetadata',
+  // v0.49.39: bulk copy-images-to-folder. The IPC handler in main
+  // fetches bytes via the app-image:// protocol (which already
+  // proxies to the server in client mode with the bearer token),
+  // so the call itself lives LOCALLY on the client — it picks the
+  // folder on the client's disk and writes there. NOT proxied to
+  // the server. The reason we DON'T list it in PROXIED_CHANNELS
+  // is exactly this: the client's local handler is what runs.
+  // (See the local override block below for the registration.)
+  // — startDragOut is also local-only: it must call
+  // event.sender.startDrag(), which is the CLIENT renderer's drag.
   // v0.16.0: bytes-based brand icon upload (client reads the icon
   // file locally, sends bytes; server runs normal importBrandIcon).
   'brands:uploadIconFromBytes',
@@ -689,9 +726,10 @@ const NOT_YET_PORTABLE = [
   // Settings page, not on a client.
   'users:list','users:create','users:update','users:remove','users:regenerateToken','users:ensureOwner',
   'server:status','server:addresses','server:start','server:stop',
-  // Settings — data folder + per-Mac counters live locally.
+  // Settings — data folder lives locally.
   'settings:pickAndSetDataFolder','settings:changeDataFolder',
-  'settings:testRemoveBg','settings:bumpRemoveBgUsage',
+  // v0.49.33: `settings:testRemoveBg` + `settings:bumpRemoveBgUsage`
+  // were removed when the paid bg-removal engine was dropped.
   // v0.26.51: data-folder trash + server-bundle migration. These all
   // operate on a LOCAL data folder, which a client doesn't have (its
   // data lives on the server). The Migration UI in Settings is
@@ -701,6 +739,11 @@ const NOT_YET_PORTABLE = [
   // a clear message instead of "No handler registered".
   'settings:trashFolder',
   'servers:exportBundle','servers:importBundle','servers:previewBundle','servers:applyImportedDataDir',
+  // v0.49.31: local backup/restore operates on a LOCAL data folder,
+  // which a client doesn't have. Stubbed so a stray call fails with a
+  // clear message instead of "No handler registered".
+  'backups:create','backups:list','backups:last','backups:preview',
+  'backups:reveal','backups:openFolder','backups:pickFolder','backups:restore',
 ];
 
 /**
@@ -1228,6 +1271,243 @@ function registerClientImageImportBridges() {
     if (canceled || !filePath) return null;
     await fsp.writeFile(filePath, Buffer.from(result.bytes));
     return filePath;
+  });
+
+  /**
+   * v0.49.39: client-mode local handlers for the multi-image copy +
+   * drag-out feature.
+   *
+   * Both must run LOCALLY on the client Mac (they touch the client's
+   * filesystem + the client's renderer drag state), not be proxied to
+   * the server. The bytes for each image come back via net.fetch
+   * through the app-image:// protocol — which `registerClientImageProtocol`
+   * has already wired up to HTTPS the remote server with the bearer
+   * token. So one net.fetch call here does both "auth" and "transfer"
+   * without us duplicating the proxy logic.
+   *
+   * Two reasons these don't appear in PROXIED_CHANNELS:
+   *   (1) copyImagesToFolder pops a folder picker on THIS Mac and
+   *       writes files to THIS Mac's disk. The server has no business
+   *       resolving paths on a different machine.
+   *   (2) startDragOut calls webContents.startDrag — that's THIS
+   *       renderer's drag operation. The server doesn't have a
+   *       webContents instance for the client's window.
+   */
+  ipcMain.handle('images:copyImagesToFolder', async (_e, { productId, filepaths, targetFolder, sku: providedSku } = {}) => {
+    if (!productId) throw new Error('productId is required');
+    if (!Array.isArray(filepaths) || filepaths.length === 0) {
+      throw new Error('filepaths must be a non-empty array');
+    }
+
+    // Folder picker — exactly the same dialog the standalone handler
+    // uses, just initiated from the client's main process. No server
+    // round-trip for the picker.
+    const { dialog: dlg, shell: shl, net: nt } = require('electron');
+    let folder = targetFolder;
+    if (!folder) {
+      const res = await dlg.showOpenDialog({
+        properties: ['openDirectory', 'createDirectory'],
+        title: filepaths.length === 1 ? 'Save image copy to…' : `Save ${filepaths.length} image copies to…`,
+      });
+      if (res.canceled || !res.filePaths[0]) {
+        return { copied: 0, folder: null, canceled: true, failures: [] };
+      }
+      folder = res.filePaths[0];
+    }
+
+    // No local DB on the client, so the SKU MUST come from the
+    // renderer (which has the product loaded in the side panel). Falls
+    // back to 'product' if missing so the copy doesn't fail outright
+    // on a stale renderer.
+    const sku = ((providedSku || 'product').toString().trim() || 'product')
+      .replace(/[^A-Za-z0-9._-]+/g, '-');
+
+    let copied = 0;
+    const failures = [];
+    for (let i = 0; i < filepaths.length; i++) {
+      const rel = filepaths[i];
+      const ext = path.extname(rel) || '.jpg';
+      const idx = String(i + 1).padStart(3, '0');
+      const baseName = `${sku}-${idx}${ext}`;
+
+      // Collision avoidance — same pattern as the standalone handler.
+      let final = path.join(folder, baseName);
+      let collisionN = 1;
+      while (fs.existsSync(final)) {
+        final = path.join(folder, `${sku}-${idx} (${collisionN})${ext}`);
+        collisionN += 1;
+        if (collisionN > 999) break;
+      }
+
+      try {
+        // The app-image:// protocol handler is the client-mode
+        // passthrough that HTTPs to the server with the bearer token
+        // and proxies the bytes back. So net.fetch hides all the
+        // "where do these bytes live" complexity from us.
+        const url = `app-image://local/${encodeURIComponent(rel)}`;
+        const res = await nt.fetch(url);
+        if (!res.ok) throw new Error(`fetch returned ${res.status}`);
+        const buf = Buffer.from(await res.arrayBuffer());
+        await fsp.writeFile(final, buf);
+        copied += 1;
+      } catch (err) {
+        failures.push({ filename: path.basename(rel), error: err.message });
+      }
+    }
+
+    if (copied > 0) {
+      try { shl.openPath(folder); } catch (_) { /* non-fatal */ }
+    }
+
+    return { copied, folder, canceled: false, failures };
+  });
+
+  /* ─── v0.49.40: client-mode multi-file drag-out ─────────────────
+   *
+   * Replaces the v0.49.39 no-op. Two channels work together:
+   *
+   *   images:prepareDrag (invoke) — download N files from the server
+   *     to a per-drag temp directory and return the resolved local
+   *     paths. The renderer calls this on mousedown of the drag pill
+   *     so the bytes are usually ready by the time the user moves
+   *     enough pixels for `ondragstart` to fire. Returns
+   *     `{ tmpDir, files: [absPath, …], failed: [...] }`. Renderer
+   *     keeps the result in component state and hands the paths to
+   *     `startDragOut` when the actual drag begins.
+   *
+   *   images:startDragOut (send) — fires the OS-level drag. In
+   *     client mode the args include `preparedPaths` (the absolute
+   *     temp-dir paths from a prior prepareDrag). startDrag is
+   *     synchronous from main's perspective once the temp files
+   *     exist; calling it from inside the IPC.on handler is fast
+   *     enough that the OS picks up the user's still-held mouse.
+   *
+   * Two-step on purpose: a single onDragStart that BOTH downloads
+   * AND drags would race the user's mouse-release on a slow link.
+   * Pre-fetching on mousedown gives the bytes a head start; the
+   * dragstart that follows ~100–300ms later finds files already
+   * landed. On fast LAN this all happens in <100ms; on Tailscale
+   * with a few 1–2 MB images it's still under a second.
+   *
+   * Lifetime: each prepareDrag creates a unique temp dir at
+   * `os.tmpdir()/iskh-drag-<rand>/`. Cleanup runs 5 min after the
+   * download completes (browsers / Mail.app etc. read attached files
+   * lazily — 5 min is enough headroom). For the rare crash-mid-drag
+   * case we rely on macOS's per-reboot /tmp cleanup; an in-app
+   * sweep on next launch is a future improvement if real leaks
+   * become visible.
+   */
+  ipcMain.handle('images:prepareDrag', async (_e, { productId, filepaths } = {}) => {
+    if (!productId) throw new Error('productId is required');
+    if (!Array.isArray(filepaths) || filepaths.length === 0) {
+      throw new Error('filepaths must be a non-empty array');
+    }
+    const { net: nt } = require('electron');
+    const os = require('node:os');
+    const crypto = require('node:crypto');
+
+    // Unique temp dir per drag. Path collisions inside it are still
+    // possible if the user dragged duplicate filenames from different
+    // product subfolders, but we handle that defensively below.
+    const dragId = `iskh-drag-${crypto.randomBytes(4).toString('hex')}`;
+    const tmpDir = path.join(os.tmpdir(), dragId);
+    await fsp.mkdir(tmpDir, { recursive: true });
+
+    const failed = [];
+    const downloaded = [];
+    // Parallel downloads — bandwidth-limited by HTTPS to the server,
+    // not CPU; Promise.all is fine for typical (≤20) selection sizes.
+    await Promise.all(filepaths.map(async (rel) => {
+      try {
+        // Filename collision avoidance within this drag's temp dir.
+        // Doesn't need to match a SKU pattern here — the file will
+        // be dropped into the user's target (browser, Mail, …) and
+        // the receiving system renames as needed.
+        const baseName = path.basename(rel) || 'image.jpg';
+        let final = path.join(tmpDir, baseName);
+        let n = 1;
+        while (fs.existsSync(final)) {
+          const ext = path.extname(baseName);
+          const stem = baseName.slice(0, baseName.length - ext.length);
+          final = path.join(tmpDir, `${stem} (${n})${ext}`);
+          n += 1;
+          if (n > 999) break;
+        }
+
+        // app-image:// in client mode routes to HTTPS server with
+        // bearer token (registerClientImageProtocol). Same auth
+        // surface the Lightbox uses for thumbs — no duplicate token
+        // plumbing here.
+        const url = `app-image://local/${encodeURIComponent(rel)}`;
+        const res = await nt.fetch(url);
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const buf = Buffer.from(await res.arrayBuffer());
+        await fsp.writeFile(final, buf);
+        downloaded.push(final);
+      } catch (err) {
+        failed.push({ filepath: rel, error: err.message });
+      }
+    }));
+
+    if (downloaded.length === 0) {
+      // Total failure — clean up the empty temp dir and report.
+      try { await fsp.rm(tmpDir, { recursive: true, force: true }); } catch {}
+      throw new Error(
+        failed.length === 1
+          ? `Couldn't download ${failed[0].filepath}: ${failed[0].error}`
+          : `All ${filepaths.length} downloads failed — check connection.`,
+      );
+    }
+
+    // Schedule cleanup of THIS temp dir. The drag itself usually
+    // completes in seconds, but receiving apps may read the bytes
+    // lazily — 5 minutes is paranoia-safe without leaving the temp
+    // dir around forever.
+    setTimeout(() => {
+      fsp.rm(tmpDir, { recursive: true, force: true }).catch(() => {});
+    }, 5 * 60 * 1000);
+
+    return { tmpDir, files: downloaded, failed };
+  });
+
+  ipcMain.on('images:startDragOut', async (event, args = {}) => {
+    const { preparedPaths } = args;
+    if (!Array.isArray(preparedPaths) || preparedPaths.length === 0) {
+      // No prepared paths — the renderer either skipped prepareDrag
+      // (which client mode requires) or the drag was triggered with
+      // a stale/empty cache. Silently no-op rather than blow up the
+      // user's drag gesture.
+      return;
+    }
+    // Defensive existence check — temp files may have been cleaned
+    // up by the 5 min timer if the user prepared a drag and then
+    // sat on the pill for too long.
+    const livePaths = preparedPaths.filter((p) => {
+      try { return fs.existsSync(p); } catch { return false; }
+    });
+    if (livePaths.length === 0) return;
+
+    const { nativeImage } = require('electron');
+    const sharp = require('sharp');
+    let icon;
+    try {
+      const iconBuf = await sharp(livePaths[0], { failOn: 'none' })
+        .rotate()
+        .resize(64, 64, { fit: 'inside' })
+        .png()
+        .toBuffer();
+      icon = nativeImage.createFromBuffer(iconBuf);
+      if (icon.isEmpty()) icon = nativeImage.createEmpty();
+    } catch (_) {
+      icon = nativeImage.createEmpty();
+    }
+
+    try {
+      event.sender.startDrag({ files: livePaths, icon });
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.error('[client startDragOut] startDrag threw:', err.message);
+    }
   });
 
   /**

@@ -37,6 +37,7 @@ const searchDomain     = require('./ipc/search');
 const dashboardDomain  = require('./ipc/dashboard');
 const auditDomain      = require('./ipc/audit');         // v0.22.6: history feed
 const serverBundleDom  = require('./ipc/serverBundle');  // v0.26.32: export/import server bundle
+const backupsDomain    = require('./ipc/backups');       // v0.49.31: local backup/restore
 
 function registerIpc(_ctx) {
   const helpers = {
@@ -63,6 +64,7 @@ function registerIpc(_ctx) {
   dashboardDomain.register(helpers);
   auditDomain.register(helpers);
   serverBundleDom.register(helpers);
+  backupsDomain.register(helpers);
 }
 
 module.exports = { registerIpc };

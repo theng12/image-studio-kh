@@ -26,15 +26,27 @@ const COSTS = {
   'kie:flux-kontext-max':           { perImageUsd: 0.055 },
 
   // ───── fal.ai ─────
-  // v0.26.47: added GPT Image-2 entries (same cost band as kie's
-  // GPT Image-2 — fal's pricing tracks OpenAI's per-image rate
-  // closely). Removed `fal-ai/flux-pro/kontext` from the catalog;
-  // legacy `flux/schnell`, `flux/dev`, `flux-pro/v1.1` cost rows
-  // kept so old queued tasks still resolve a cost estimate, but
-  // they're no longer pickable.
-  'fal-ai/gpt-image-2/edit-image':  { perImageUsd: 0.045 },
-  'fal-ai/gpt-image-2/text-to-image': { perImageUsd: 0.045 },
-  'fal-ai/nano-banana/edit':        { perImageUsd: 0.035 },
+  // v0.49.25: re-checked against the official pricing table at
+  // https://fal.ai/models/openai/gpt-image-2/edit — fal exposes a real
+  // size × quality matrix. The numbers below use the 1024×1024 MEDIUM
+  // quality row as the default estimate. Real numbers for reference:
+  //   Size         Low      Medium   High
+  //   1024×768     $0.011   $0.043   $0.151
+  //   1024×1024    $0.015   $0.061   $0.219
+  //   1024×1536    $0.018   $0.054   $0.178
+  //   1920×1080    $0.017   $0.053   $0.158
+  //   2560×1440    $0.019   $0.068   $0.234
+  //   3840×2160    $0.024   $0.113   $0.413
+  // Note: a single perImageUsd can\'t encode the variance; until the cost
+  // estimator learns about quality, we estimate medium 1024×1024 = $0.061.
+  // Use the Quality picker in AI Studio to actually control cost.
+  'openai/gpt-image-2/edit':        { perImageUsd: 0.061 },
+  'openai/gpt-image-2':             { perImageUsd: 0.061 },
+  // Legacy entries — only resolve cost for in-flight queued tasks; the
+  // picker hides these via the `deprecated` flag in models.js.
+  'fal-ai/gpt-image-2/edit-image':  { perImageUsd: 0.061 },
+  'fal-ai/gpt-image-2/text-to-image': { perImageUsd: 0.061 },
+  'fal-ai/nano-banana/edit':        { perImageUsd: 0.039 },
   'fal-ai/seedream/v4/edit':        { perImageUsd: 0.030 },
   'fal-ai/recraft/v3/image-to-image': { perImageUsd: 0.040 },
   // Legacy fal entries — only for cost estimation on already-queued

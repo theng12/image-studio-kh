@@ -21,22 +21,24 @@ export function createDashboardSlice(set, get) {
     dashboardStats: null,
     dashboardRecentBrands: [],
     dashboardRecentProducts: [],
+    dashboardCompleteness: null, // v0.35.0: { total, missingImages, missingBarcode, missingPrice, notExported }
     donateBannerDismissed: !donateBannerShouldShow(),
 
     async refreshDashboard() {
       if (!window.api) return;
       const companyId = get().activeCompanyId;
       if (!companyId) {
-        set({ dashboardStats: null, dashboardRecentBrands: [], dashboardRecentProducts: [] });
+        set({ dashboardStats: null, dashboardRecentBrands: [], dashboardRecentProducts: [], dashboardCompleteness: null });
         return;
       }
       try {
-        const [stats, recentBrands, recentProducts] = await Promise.all([
+        const [stats, recentBrands, recentProducts, completeness] = await Promise.all([
           window.api.dashboard.stats(companyId),
           window.api.dashboard.recentBrands(companyId, 5),
           window.api.dashboard.recentProducts(companyId, 8),
+          window.api.dashboard.completeness(companyId).catch(() => null),
         ]);
-        set({ dashboardStats: stats, dashboardRecentBrands: recentBrands, dashboardRecentProducts: recentProducts });
+        set({ dashboardStats: stats, dashboardRecentBrands: recentBrands, dashboardRecentProducts: recentProducts, dashboardCompleteness: completeness });
       } catch (err) {
         get().addToast(err.message, 'error');
       }

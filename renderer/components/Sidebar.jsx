@@ -25,6 +25,10 @@ function saveSidebarCollapsed(v) {
   try { localStorage.setItem(SIDEBAR_COLLAPSED_KEY, v ? 'true' : 'false'); } catch {}
 }
 
+// v0.45.0: `roleMin` (optional) — the lowest role for which this nav item is
+// shown. Omitted = visible to everyone. Hierarchy: viewer < photographer <
+// editor < admin. Standalone / server-host renderers always run as admin
+// since local IPC isn't gated.
 const NAV = [
   {
     label: null,
@@ -45,10 +49,13 @@ const NAV = [
     label: 'Production',
     items: [
       { id: 'library',   name: 'Product Library', icon: IconLibrary,   shortcut: '2' },
-      { id: 'workspace', name: 'Image Workspace', icon: IconWorkspace, shortcut: '3' },
-      { id: 'aistudio',  name: 'AI Studio',       icon: IconAiStudio,  shortcut: '4' },
-      { id: 'overlay',   name: 'Overlay Studio',  icon: IconOverlay,   shortcut: '5' },
-      { id: 'export',    name: 'Export Center',   icon: IconExport,    shortcut: '6' },
+      // The four below are all write-driven workflows — Viewer and
+      // Photographer can't usefully do anything inside them, so they're
+      // hidden rather than presented as dead links that 403 on every action.
+      { id: 'workspace', name: 'Image Workspace', icon: IconWorkspace, shortcut: '3', roleMin: 'editor' },
+      { id: 'aistudio',  name: 'AI Studio',       icon: IconAiStudio,  shortcut: '4', roleMin: 'editor' },
+      { id: 'overlay',   name: 'Overlay Studio',  icon: IconOverlay,   shortcut: '5', roleMin: 'editor' },
+      { id: 'export',    name: 'Export Center',   icon: IconExport,    shortcut: '6', roleMin: 'editor' },
     ],
   },
   {
@@ -57,11 +64,18 @@ const NAV = [
       // v0.26.31: global audit-log feed. Sits above Settings because
       // it's something users will visit often ("what did my assistant
       // change yesterday?") whereas Settings is a configure-once page.
-      { id: 'history',  name: 'History',  icon: IconHistory, shortcut: '7' },
+      { id: 'history',  name: 'History',  icon: IconHistory, shortcut: '7', roleMin: 'editor' },
       { id: 'settings', name: 'Settings', icon: IconSettings, shortcut: ',' },
     ],
   },
 ];
+
+// Lowest → highest. Used by both nav filtering and the body data-role attr
+// that downstream CSS gating in the Library / ProductForm keys off.
+const ROLE_RANK = { viewer: 1, photographer: 2, editor: 3, admin: 4 };
+function hasRoleAtLeast(role, min) {
+  return (ROLE_RANK[role] || 0) >= (ROLE_RANK[min] || 0);
+}
 
 export function Sidebar() {
   const activeModule = useAppStore((s) => s.activeModule);
@@ -98,6 +112,24 @@ export function Sidebar() {
   // collapsed. Persisted via localStorage helpers above.
   const [collapsed, setCollapsedRaw] = useState(loadSidebarCollapsed);
   const setCollapsed = (v) => { setCollapsedRaw(v); saveSidebarCollapsed(v); };
+
+  // v0.45.0: effective role. Local IPC isn't role-gated, so standalone /
+  // server-host renderers are admin by definition. In client mode we trust
+  // the role the server attached to our connection; defaults to 'admin'
+  // while whoami is still loading so the nav doesn't briefly hide modules
+  // a connected admin / editor will get back a moment later.
+  const role = appMode === 'client'
+    ? (clientConnection?.user?.role || 'admin')
+    : 'admin';
+
+  // Mirror the role to <body> so module-level CSS (Library bulk toolbar,
+  // ProductForm image × buttons, etc.) can hide write affordances without
+  // every component having to re-derive it. Set/reset on every change so
+  // a role switch (admin demotes a user mid-session) updates the UI cleanly.
+  useEffect(() => {
+    document.body.dataset.role = role;
+    return () => { document.body.dataset.role = ''; };
+  }, [role]);
 
   return (
     <>
@@ -136,7 +168,7 @@ export function Sidebar() {
               {section.label ? (
                 <div className="sidebar__section-label">{section.label}</div>
               ) : null}
-              {section.items.map((item) => {
+              {section.items.filter((item) => !item.roleMin || hasRoleAtLeast(role, item.roleMin)).map((item) => {
                 const Icon = item.icon;
                 const active = activeModule === item.id;
                 const disabled = !isModuleAvailable(item.id);
@@ -580,11 +612,24 @@ function IconExport({ className }) {
   );
 }
 
+// v0.49.10: was a sun (circle + 8 rays) which read as "weather / brightness"
+// rather than "settings." Swapped for a Feather-style gear — recognised
+// across every desktop OS as the universal settings symbol.
 function IconSettings({ className }) {
   return (
-    <svg className={className} width="18" height="18" viewBox="0 0 18 18" fill="none">
-      <circle cx="9" cy="9" r="2.2" stroke="currentColor" strokeWidth="1.4" />
-      <path d="M9 1.5v2M9 14.5v2M16.5 9h-2M3.5 9h-2M14.3 3.7l-1.4 1.4M5.1 12.9l-1.4 1.4M14.3 14.3l-1.4-1.4M5.1 5.1L3.7 3.7" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
+    <svg
+      className={className}
+      width="18"
+      height="18"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.6"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <circle cx="12" cy="12" r="3" />
+      <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z" />
     </svg>
   );
 }

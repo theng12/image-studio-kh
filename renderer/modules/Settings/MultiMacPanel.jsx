@@ -96,6 +96,15 @@ export function ServerModePanel({ config, addToast }) {
   const [addForm, setAddForm] = useState(null); // null | { name, role }
   // v0.14.2: live server status (running / port / bind addresses).
   const [serverStatus, setServerStatus] = useState({ running: false });
+  // v0.34.0: mobile/iPad web viewer toggle. Local mirror of the
+  // `webViewerEnabled` config flag (default ON) so the switch is snappy;
+  // persisted via settings.setOne. Server reads the flag per-request.
+  const [webViewer, setWebViewer] = useState(config?.webViewerEnabled !== false);
+  async function toggleWebViewer(next) {
+    setWebViewer(next);
+    try { await window.api.settings.setOne('webViewerEnabled', next); }
+    catch (err) { setWebViewer(!next); addToast?.(err.message, 'error'); }
+  }
   useEffect(() => {
     let cancelled = false;
     async function poll() {
@@ -290,6 +299,32 @@ export function ServerModePanel({ config, addToast }) {
       </div>
     </SettingRow>
     <SettingRow
+      label="Mobile web viewer"
+      hint="Serves a lightweight phone/iPad page at /m on this same server — for viewing, searching, and adding product photos straight from the camera or photo library. Nothing to install: open the address in Safari and paste a user token. Toggle off to disable the page (your Mac clients' API stays up either way)."
+    >
+      <label className="toggle">
+        <input type="checkbox" checked={webViewer} onChange={(e) => toggleWebViewer(e.target.checked)} />
+        <span>{webViewer ? 'On' : 'Off'}</span>
+      </label>
+      {webViewer && serverStatus.running && (serverStatus.addresses ?? []).length > 0 ? (
+        <div className="server-status__addrs" style={{ marginTop: 8 }}>
+          <div className="muted" style={{ fontSize: 12, marginBottom: 4 }}>Open one of these in Safari on the phone/iPad:</div>
+          {serverStatus.addresses.map((a) => {
+            const url = `http://${a.ip}:${serverStatus.port}/m`;
+            return (
+              <div key={a.ip} className="server-status__addr">
+                <code
+                  className="server-status__url"
+                  onClick={() => { navigator.clipboard?.writeText(url); addToast?.('Copied: ' + url, 'success'); }}
+                  title="Click to copy — open this in Safari on your phone/iPad, then paste a user token."
+                >{url}</code>
+              </div>
+            );
+          })}
+        </div>
+      ) : null}
+    </SettingRow>
+    <SettingRow
       label="Users"
       hint="Each connecting Mac authenticates with a user token. Add one per person who'll use the app. Tokens are long random strings — show them to the admin once, then they're stored in the DB. Anyone with the token has the user's role; regenerate if a token leaks."
     >
@@ -306,8 +341,10 @@ export function ServerModePanel({ config, addToast }) {
                 <td>{u.name}</td>
                 <td>
                   <Select value={u.role} onChange={(e) => handleRoleChange(u.id, e.target.value)}>
-                    <option value="admin">admin</option>
-                    <option value="editor">editor</option>
+                    <option value="admin">admin — full control</option>
+                    <option value="editor">editor — edit catalog</option>
+                    <option value="photographer">photographer — add photos only</option>
+                    <option value="viewer">viewer — read-only</option>
                   </Select>
                 </td>
                 <td>
@@ -345,8 +382,10 @@ export function ServerModePanel({ config, addToast }) {
               value={addForm.role}
               onChange={(e) => setAddForm((f) => ({ ...f, role: e.target.value }))}
             >
-              <option value="editor">editor</option>
-              <option value="admin">admin</option>
+              <option value="editor">editor — edit catalog</option>
+              <option value="admin">admin — full control</option>
+              <option value="photographer">photographer — add photos only</option>
+              <option value="viewer">viewer — read-only</option>
             </Select>
             <Button variant="primary" onClick={submitAdd} disabled={busy || !addForm.name.trim()}>
               {busy ? 'Creating…' : 'Create'}

@@ -61,6 +61,8 @@ export function ImportModal({ open, onClose }) {
   const [mapping, setMapping] = useState({});
   const [result, setResult] = useState(null);
   const [busy, setBusy] = useState(false);
+  // v0.33.0: batched-apply progress { done, total } | null.
+  const [applyProgress, setApplyProgress] = useState(null);
   // Preview state. `preview` holds the dry-run result; `conflictPolicy`
   // is editable on the preview screen and the rerun-on-change updates
   // the preview without committing.
@@ -228,25 +230,48 @@ export function ImportModal({ open, onClose }) {
     }
   }
 
-  /** Commit the changes shown in the preview. */
+  /**
+   * Commit the changes shown in the preview.
+   *
+   * v0.33.0: chunk the write into batches instead of one giant bulkUpsert.
+   * A single call with thousands of rows is one huge RPC payload + one long
+   * server transaction that can stall a client connection (and stalls the
+   * server's event loop for everyone). Looping ~250-row batches keeps each
+   * call small + fast, lets us show real progress, and recovers gracefully
+   * if one batch fails. Recurses (loops) until every row is committed.
+   */
   async function handleApplyChanges() {
     if (!cachedRows) {
       addToast('Preview missing — go back and try again', 'error');
       return;
     }
     setBusy(true);
+    const BATCH_SIZE = 250;
+    const total = cachedRows.length;
+    const agg = { inserted: 0, updated: 0, skips: [], rowsConsidered: total, conflictPolicy };
     try {
-      const res = await window.api.products.bulkUpsert(activeCompanyId, cachedRows, {
-        dryRun: false,
-        conflictPolicy,
-      });
-      setResult({ ...res, rowsConsidered: cachedRows.length });
+      for (let i = 0; i < total; i += BATCH_SIZE) {
+        const batch = cachedRows.slice(i, i + BATCH_SIZE);
+        setApplyProgress({ done: i, total });
+        const res = await window.api.products.bulkUpsert(activeCompanyId, batch, {
+          dryRun: false,
+          conflictPolicy,
+        });
+        agg.inserted += res.inserted || 0;
+        agg.updated += res.updated || 0;
+        if (Array.isArray(res.skips)) agg.skips.push(...res.skips);
+      }
+      setApplyProgress({ done: total, total });
+      setResult(agg);
+      // One refresh after all batches land (not per-batch) so the Library
+      // re-pulls the catalog once.
       await Promise.all([refreshBrands(), refreshCategories(), refreshProducts(), refreshDashboard()]);
       setStep('review');
     } catch (err) {
       addToast(err.message, 'error');
     } finally {
       setBusy(false);
+      setApplyProgress(null);
     }
   }
 
@@ -268,7 +293,9 @@ export function ImportModal({ open, onClose }) {
           disabled={busy || !preview}
           onClick={handleApplyChanges}
         >
-          {busy ? 'Applying…' : `Apply ${(preview?.changes ?? []).filter((c) => c.action === 'insert' || c.action === 'update').length} change${(preview?.changes ?? []).filter((c) => c.action === 'insert' || c.action === 'update').length === 1 ? '' : 's'}`}
+          {busy
+            ? (applyProgress ? `Applying ${applyProgress.done}/${applyProgress.total}…` : 'Applying…')
+            : `Apply ${(preview?.changes ?? []).filter((c) => c.action === 'insert' || c.action === 'update').length} change${(preview?.changes ?? []).filter((c) => c.action === 'insert' || c.action === 'update').length === 1 ? '' : 's'}`}
         </Button>
       </>
     ) : (

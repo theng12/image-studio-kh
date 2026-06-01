@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useAppStore } from '../../store/index.js';
-import { Button, EmptyState, Pagination } from '../../components/ui.jsx';
+import { Button, EmptyState, Pagination, Select } from '../../components/ui.jsx';
 import { PageHeader } from '../../components/PageHeader.jsx';
 import { Lightbox } from '../../components/Lightbox.jsx';
 import { ProductForm } from './ProductForm.jsx';
@@ -11,7 +11,17 @@ import { ProcessDestinationModal } from '../../components/ProcessDestinationModa
 import { BulkEditModal } from './BulkEditModal.jsx';
 import { BulkProductsAIRunModal } from './BulkProductsAIRunModal.jsx';
 import { BulkOverlayRunModal } from './BulkOverlayRunModal.jsx';
+// v0.49.34: the combined "Convert · compress · resize" modal was split into
+// three independent modals — one knob per tool. Same backend IPC; the
+// renderer just gates which form fields each modal exposes.
+import { BulkConvertModal } from './BulkConvertModal.jsx';
+import { BulkCompressModal } from './BulkCompressModal.jsx';
+import { BulkResizeModal } from './BulkResizeModal.jsx';
+import { AutoCropRunModal } from './AutoCropRunModal.jsx';
+import { BulkBgRemovalModal } from './BulkBgRemovalModal.jsx';
+import { AutoEnhanceRunModal } from './AutoEnhanceRunModal.jsx';
 import { confirm } from '../../components/ConfirmModal.jsx';
+import { confirmWithBackup } from '../../components/BackupReminder.jsx';
 import { TableView } from './LibraryTable.jsx';
 import {
   GridView,
@@ -211,6 +221,17 @@ export function ProductLibrary() {
   // position as the AI bulk modal so the two batch surfaces are
   // discoverable side-by-side.
   const [bulkOverlayOpen, setBulkOverlayOpen] = useState(false);
+  // v0.49.34: three independent bulk modals replace the combined
+  // "Convert · compress · resize" — same backend, focused UIs.
+  const [bulkConvertOpen, setBulkConvertOpen] = useState(false);
+  const [bulkCompressOpen, setBulkCompressOpen] = useState(false);
+  const [bulkResizeOpen, setBulkResizeOpen] = useState(false);
+  // v0.37.0: batch auto-crop-to-product modal (trim + uniform reframe).
+  const [autoCropOpen, setAutoCropOpen] = useState(false);
+  // v0.38.0: bulk background-removal modal (clean white bg on main image).
+  const [bulkBgOpen, setBulkBgOpen] = useState(false);
+  // v0.40.0: bulk auto-enhance modal (white-balance + levels + saturation).
+  const [autoEnhanceOpen, setAutoEnhanceOpen] = useState(false);
   // v0.26.16: when the user picks "Overlay Studio" from the Process
   // router (single-product Process button on a row / side panel),
   // we stash the single product id so the BulkOverlayRunModal
@@ -247,7 +268,7 @@ export function ProductLibrary() {
   async function handleBulkDelete() {
     const ids = Array.from(selectedIds);
     if (ids.length === 0) return;
-    const ok = await confirm({
+    const ok = await confirmWithBackup({
       title: `Delete ${ids.length} product${ids.length === 1 ? '' : 's'}?`,
       message: 'All images, AI generations, and metadata for these products will be removed from disk.',
       detail: 'This cannot be undone.',
@@ -374,6 +395,27 @@ export function ProductLibrary() {
     }
   }
 
+  // v0.36.0: export the whole catalog as a CSV/feed (generic / Shopify /
+  // Google Shopping). The IPC returns the CSV text; we trigger a download
+  // client-side (works on desktop AND the iPad web viewer). Prepend a UTF-8
+  // BOM so Excel opens Khmer/Unicode names correctly.
+  async function handleExportCsv(format) {
+    if (!format) return;
+    try {
+      const res = await window.api.exports.catalogCsv(activeCompanyId, format);
+      if (!res || !res.csv) { useAppStore.getState().addToast('Nothing to export', 'info'); return; }
+      const blob = new Blob(['﻿' + res.csv], { type: 'text/csv;charset=utf-8' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url; a.download = res.filename || 'catalog.csv';
+      document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+      useAppStore.getState().addToast(`Exported ${res.count} product${res.count === 1 ? '' : 's'} (${format})`, 'success');
+    } catch (err) {
+      useAppStore.getState().addToast(err.message, 'error');
+    }
+  }
+
   // Stable row handlers so memoized rows don't re-render on every parent
   // state change (filter typing, page change, etc.). Without useCallback the
   // arrow functions get a fresh identity each render, defeating React.memo.
@@ -452,7 +494,11 @@ export function ProductLibrary() {
               <input
                 type="search"
                 className="search-input"
-                placeholder="Search SKU, name, color, tags…"
+                /* v0.49.37: dropped the misleading "tags" hint — tags
+                   haven't been part of the Library search since v0.26.49
+                   when the scope narrowed to (sku, name, color_finish).
+                   Now the placeholder matches what actually gets searched. */
+                placeholder="Search SKU, name, color…"
                 value={filters.search}
                 onChange={(e) => setProductSearch(e.target.value)}
               />
@@ -514,6 +560,22 @@ export function ProductLibrary() {
             <Button onClick={() => setDedupOpen(true)}>Merge duplicates…</Button>
             <Button onClick={handleDownloadSample}>Download sample</Button>
             <Button onClick={() => setImportOpen(true)}>Import Excel/CSV</Button>
+            {/* v0.36.0: catalog CSV / marketplace feed export. Pick a format;
+                snaps back to the placeholder so the same one can re-fire.
+                Labels kept SHORT so the closed select doesn't dominate the
+                toolbar — hover/title carries the full explanation. */}
+            <Select
+              value=""
+              className="lib-csv-select"
+              aria-label="Export catalog CSV"
+              title="Export the whole catalog as a CSV / marketplace feed (Catalog · Shopify · Google Shopping)"
+              onChange={(e) => { const f = e.target.value; e.target.value = ''; handleExportCsv(f); }}
+            >
+              <option value="">CSV…</option>
+              <option value="generic">Catalog</option>
+              <option value="shopify">Shopify</option>
+              <option value="google">Google</option>
+            </Select>
             <Button variant="primary" onClick={() => setEditing('new')}>+ New product</Button>
           </>
         }
@@ -617,14 +679,47 @@ export function ProductLibrary() {
                     {selectedIds.size} selected
                   </span>
                   <div className="lib-bulk-toolbar__spacer" />
-                  <Button onClick={() => setBulkAiOpen(true)} disabled={bulkDeleting}>
+                  {/* v0.49.30: toolbar shape:
+                       AI Studio  →  Image operations ▾  |  Edit fields  |  Delete N  |  Clear
+                      AI Studio stays its own top-level button — it has cost
+                      + provider-queue implications that don\'t belong in
+                      the same menu as free local sharp passes.
+                      Image operations groups the six free local image-
+                      changing bulk modals (bg removal, auto-crop / reframe,
+                      auto-enhance, re-encode, apply overlay), split inside
+                      the menu by destructive vs non-destructive so the user
+                      sees which actions overwrite originals before clicking.
+                      Edit fields is metadata-only — stays its own button.
+                      Delete + Clear stay inline (destructive affordance / escape). */}
+                  <Button onClick={() => setBulkAiOpen(true)} disabled={bulkDeleting} title="Queues a paid AI generation for each — kie.ai / fal.ai. Confirms cost before running.">
                     AI Studio ({selectedIds.size}) →
                   </Button>
-                  <Button onClick={() => setBulkOverlayOpen(true)} disabled={bulkDeleting}>
-                    Overlay ({selectedIds.size}) →
-                  </Button>
-                  <Button onClick={() => setBulkEditOpen(true)} disabled={bulkDeleting}>
-                    Edit selected ({selectedIds.size})
+                  <BulkActionsMenu
+                    label={`Image operations (${selectedIds.size}) ▾`}
+                    disabled={bulkDeleting}
+                    sections={[
+                      {
+                        label: 'Non-destructive · original kept',
+                        items: [
+                          { label: 'Remove background',  hint: 'Cutout via @imgly. Adds the result as a new image and promotes it to main; original demotes to #2.', onClick: () => setBulkBgOpen(true) },
+                          { label: 'Apply overlay',      hint: 'Composite an Overlay template onto the main image. Defaults to Append (new image); Replace main is opt-in.', onClick: () => setBulkOverlayOpen(true) },
+                        ],
+                      },
+                      {
+                        label: 'Destructive · overwrites originals',
+                        items: [
+                          { label: 'Auto-crop / reframe', hint: 'Trim background + reframe to a uniform fill. Rewrites the source file in place.', onClick: () => setAutoCropOpen(true) },
+                          { label: 'Enhance',             hint: 'White-balance + auto-levels + saturation. Rewrites the source file in place.', onClick: () => setAutoEnhanceOpen(true) },
+                          // v0.49.34: three focused tools instead of one combined modal.
+                          { label: 'Convert format',      hint: 'Re-encode each image as JPEG, PNG, or WebP. Renames the file on disk when the extension changes.', onClick: () => setBulkConvertOpen(true) },
+                          { label: 'Compress',            hint: 'Re-encode at a chosen quality, keep the existing format. Shrinks file size without renaming.', onClick: () => setBulkCompressOpen(true) },
+                          { label: 'Resize',              hint: 'Change pixel dimensions — cap the long edge, or set exact W × H with a fit mode and (for Contain) a background colour.', onClick: () => setBulkResizeOpen(true) },
+                        ],
+                      },
+                    ]}
+                  />
+                  <Button onClick={() => setBulkEditOpen(true)} disabled={bulkDeleting} title="Bulk-update metadata fields (brand, category, status, etc.) — doesn’t touch the image bytes.">
+                    Edit fields ({selectedIds.size})
                   </Button>
                   <Button variant="danger" onClick={handleBulkDelete} disabled={bulkDeleting}>
                     {bulkDeleting ? 'Deleting…' : `Delete ${selectedIds.size}`}
@@ -727,6 +822,49 @@ export function ProductLibrary() {
         filters={filters}
         onClose={() => { setBulkOverlayOpen(false); setOverlayApplyProductId(null); }}
         onDone={() => { setBulkOverlayOpen(false); setOverlayApplyProductId(null); }}
+      />
+
+      <AutoCropRunModal
+        open={autoCropOpen}
+        productIds={Array.from(selectedIds)}
+        onClose={() => setAutoCropOpen(false)}
+        onDone={() => setAutoCropOpen(false)}
+      />
+
+      <BulkBgRemovalModal
+        open={bulkBgOpen}
+        productIds={Array.from(selectedIds)}
+        onClose={() => setBulkBgOpen(false)}
+        onDone={() => setBulkBgOpen(false)}
+      />
+
+      <AutoEnhanceRunModal
+        open={autoEnhanceOpen}
+        productIds={Array.from(selectedIds)}
+        onClose={() => setAutoEnhanceOpen(false)}
+        onDone={() => setAutoEnhanceOpen(false)}
+      />
+
+      {/* v0.49.34: three independent modals replace the combined
+          BulkReencodeModal. All three call images:reencodeProducts; the
+          renderer side just constrains which knobs each surfaces. */}
+      <BulkConvertModal
+        open={bulkConvertOpen}
+        productIds={Array.from(selectedIds)}
+        onClose={() => setBulkConvertOpen(false)}
+        onDone={() => setBulkConvertOpen(false)}
+      />
+      <BulkCompressModal
+        open={bulkCompressOpen}
+        productIds={Array.from(selectedIds)}
+        onClose={() => setBulkCompressOpen(false)}
+        onDone={() => setBulkCompressOpen(false)}
+      />
+      <BulkResizeModal
+        open={bulkResizeOpen}
+        productIds={Array.from(selectedIds)}
+        onClose={() => setBulkResizeOpen(false)}
+        onDone={() => setBulkResizeOpen(false)}
       />
 
       <ProcessDestinationModal
@@ -863,6 +1001,82 @@ function RefreshButton() {
         />
       </svg>
     </button>
+  );
+}
+
+/**
+ * v0.49.29: dropdown menu for the Library bulk toolbar.
+ *
+ * `sections` is an array of `{label, items: [{label, hint, onClick}]}` so the
+ * caller decides the grouping (Generate, Edit, future Manage / Export …).
+ * New bulk actions slot into a category instead of pushing the toolbar wider.
+ *
+ * Behaviour:
+ *   - Esc or click-outside closes the menu.
+ *   - Each item runs its onClick AND closes the menu.
+ *   - The button is disabled when nothing is selected or a bulk op is running.
+ *
+ * Built inline (not a generic Popover primitive) because this is the only
+ * caller and the styling is purpose-specific. If we ever need a second
+ * popover in the app, extract then.
+ */
+function BulkActionsMenu({ label, count, disabled, sections }) {
+  const [open, setOpen] = useState(false);
+  const containerRef = useRef(null);
+
+  useEffect(() => {
+    if (!open) return undefined;
+    function onDocDown(e) {
+      if (!containerRef.current) return;
+      if (!containerRef.current.contains(e.target)) setOpen(false);
+    }
+    function onKey(e) { if (e.key === 'Escape') setOpen(false); }
+    document.addEventListener('mousedown', onDocDown);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('mousedown', onDocDown);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [open]);
+
+  // v0.49.30: caller can pass a custom `label` (e.g. "Image operations (N) ▾").
+  // Falls back to the v0.49.29 generic label when not given.
+  const triggerLabel = label || `Bulk actions${count != null ? ` (${count})` : ''} ▾`;
+
+  return (
+    <div className="lib-bulk-menu" ref={containerRef}>
+      <Button
+        variant="primary"
+        onClick={() => setOpen((v) => !v)}
+        disabled={disabled}
+        aria-haspopup="menu"
+        aria-expanded={open}
+      >
+        {triggerLabel}
+      </Button>
+      {open ? (
+        <div className="lib-bulk-menu__panel" role="menu">
+          {sections.map((sec, sx) => (
+            <div key={sec.label} className="lib-bulk-menu__section">
+              {sx > 0 ? <div className="lib-bulk-menu__divider" /> : null}
+              <div className="lib-bulk-menu__heading">{sec.label}</div>
+              {sec.items.map((it) => (
+                <button
+                  key={it.label}
+                  type="button"
+                  className="lib-bulk-menu__item"
+                  onClick={() => { setOpen(false); it.onClick(); }}
+                  role="menuitem"
+                >
+                  <div className="lib-bulk-menu__item-label">{it.label}</div>
+                  {it.hint ? <div className="lib-bulk-menu__item-hint">{it.hint}</div> : null}
+                </button>
+              ))}
+            </div>
+          ))}
+        </div>
+      ) : null}
+    </div>
   );
 }
 

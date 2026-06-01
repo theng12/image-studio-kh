@@ -34,11 +34,14 @@
  *   - dataDirIsCloud      → that's the new Mac's iCloud state
  *
  * What DOES travel + why:
- *   - kieApiKey, falApiKey, removeBgApiKey → re-typing these is the
- *     #1 friction of the manual procedure; baking them in saves the
- *     user from "wait, where's my kie token?"
- *   - kieConcurrency, falConcurrency, bgRemovalEngine → user-tuned
- *     defaults; should follow the data
+ *   - kieApiKey, falApiKey → re-typing these is the #1 friction of
+ *     the manual procedure; baking them in saves the user from
+ *     "wait, where's my kie token?"
+ *   - kieConcurrency, falConcurrency → user-tuned defaults; should
+ *     follow the data
+ *
+ * (v0.49.33: removeBgApiKey + bgRemovalEngine were dropped from the
+ * bundle keys when the paid bg-removal engine was removed.)
  *   - customPresets, defaultTokens, defaultSeparator → editor / export
  *     preferences; should follow the data
  *   - defaultExportProfileId → profile ids are stable across the move
@@ -59,10 +62,10 @@ const { app } = require('electron');
 const PORTABLE_CONFIG_KEYS = [
   'kieApiKey',
   'falApiKey',
-  'removeBgApiKey',
+  // v0.49.33: removeBgApiKey + bgRemovalEngine removed — the paid
+  // engine is gone, only the bundled local @imgly engine remains.
   'kieConcurrency',
   'falConcurrency',
-  'bgRemovalEngine',
   'customPresets',
   'defaultTokens',
   'defaultSeparator',

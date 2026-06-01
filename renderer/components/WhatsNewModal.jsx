@@ -2,6 +2,635 @@ import { Modal } from './ui.jsx';
 
 const CHANGELOG = [
   {
+    version: '0.49.40',
+    date: '2026-06-01',
+    items: [
+      'NEW — Multi-file drag-out works in client mode now. The "⤴ Drag N" pill in the ProductForm selection strip is no longer hidden on client Macs. Click and drag images straight onto an external webpage upload field, Mail, Slack, Photoshop, Finder — anywhere that accepts a native multi-file drop — and the bytes get pulled from the server Mac on demand and delivered as real files. Built specifically for the "drag images into the customer\'s separate product-management web system" workflow.',
+      'How it works under the hood (two-step pattern): when you start dragging, the renderer fires `images:prepareDrag` first — that downloads the selected files from the server via the existing `app-image://` protocol (with your bearer token) into a per-drag temp folder under `/tmp/iskh-drag-<random>/`. Once the files exist locally, `images:startDragOut` calls `webContents.startDrag({files, icon})` and the OS picks up the still-held mouse gesture as a native multi-file drag. The drop target sees them indistinguishable from a Finder drag.',
+      'Pill shows "Preparing N…" with an amber border while the download is in flight so you know to keep your mouse held. On a fast LAN or Tailscale link with typical product photos (1–2 MB each), prep usually completes in under a second — fast enough that the OS still considers the gesture live and starts the drag without interruption. On a slow link with 5 MB+ files, the prep may exceed your mouse-hold patience; in that case the drag fails silently, you release, and try again.',
+      'Same channels work in standalone / server mode too — there the prepareDrag is instant (just resolves relative filepaths to absolute paths under `assets/`, no downloads). One renderer code path covers both modes; the same pill in the same place behaves the same way.',
+      'Temp cleanup: each drag\'s files live in `/tmp/iskh-drag-<random>/` and get cleaned up 5 minutes after the prep completes — long enough for any drop target to read the bytes lazily (Mail attachments, browser upload widgets that re-read after the drop event), short enough not to leave clutter. macOS\'s automatic `/tmp` clean on reboot handles the rare crash-mid-drag case.',
+      'Internal — new `images:prepareDrag` IPC (handle), revised `images:startDragOut` IPC (send) to take `preparedPaths` instead of resolving filepaths internally. The split matters because in client mode the prep step is the expensive one (network download) — making it its own channel means the dragstart handler can await prep deterministically. Standalone\'s prepareDrag returns inline; client\'s does the multi-fetch via the existing app-image:// passthrough.',
+      'Verified: 100/100 tests pass. Build clean.',
+    ],
+  },
+  {
+    version: '0.49.39',
+    date: '2026-06-01',
+    items: [
+      'NEW — Copy MULTIPLE product images at once. The side-panel image grid now has a "Copy ▾" dropdown next to "+ Add image" with three quick actions: Save main image to folder…, Save all N images to folder…, and "Select all for multi-action" (which seeds the per-image checkboxes). Files land with clean catalog naming — `<SKU>-001.jpg`, `<SKU>-002.jpg`, … — and the Finder window opens at the target folder so you can confirm the drop visually.',
+      'NEW — Per-image multi-select for partial copies. Each thumbnail in the side panel now has a tickbox (top-left, revealed on hover or once any image is selected). Tick the ones you want, and a strip appears above the grid: "N selected · [Copy to folder…] [⤴ Drag N] [Clear]". Works for any subset of the product\'s images — useful when you need to send a client images 2 and 5 but not the rest.',
+      'NEW — Native multi-file drag-out. The "⤴ Drag N" pill in the selection strip is a real OS drag handle: click and drag it onto Finder, Mail, Slack, Photoshop, a web file input, or any drop target, and all selected files come along as native files (the same way Finder would deliver them). No need for an intermediate folder picker if you just want to attach images to an email or drop them into a chat. Standalone / server mode only for now — client mode drag-out needs a pre-download step that\'s deferred to Phase 2; the drag pill is hidden there.',
+      'Where it works the same in all three modes: the "Save to folder…" path uses the existing `app-image://` protocol passthrough, so a client Mac fetches bytes from its server Mac over HTTPS with the bearer token and writes them to the client\'s chosen local folder. One code path, one auth surface, no separate "client-only export" flow to maintain.',
+      'Auto-renumbering: dropping copies into a folder that already has a `KT-2213-001.jpg` doesn\'t clobber it — the copier appends `(1)`, `(2)`, … until it finds a free name. Re-runnable without manual cleanup.',
+      'Internal — new IPCs `images:copyImagesToFolder` (handle, returns `{copied, folder, canceled, failures}`) and `images:startDragOut` (one-way send, must be invoked from inside a renderer dragstart with `preventDefault()` so Chromium\'s default drag doesn\'t race). The renderer passes `sku` directly so the main handler doesn\'t need a DB lookup — that lets the client-mode mirror in `main/client/index.js` reuse identical logic without a local products table. Drag icon is a 64×64 PNG ghost of the first image generated via sharp.',
+      'Verified: 100/100 tests pass. Build clean.',
+    ],
+  },
+  {
+    version: '0.49.38',
+    date: '2026-06-01',
+    items: [
+      'FIX — Library search "flickers correct then snaps to everything" on client Macs. A v0.49.21 user described it exactly: type "2213" → see 4 results for a second → list refreshes back to every product. Root cause: each keystroke fired an HTTP IPC over the network, and on a client there\'s no guarantee responses come back in send order. Typing "2213" fired four parallel queries ("2", "22", "221", "2213") and whichever response landed LAST won — usually one of the older, broader queries. The list would briefly show the correct narrow result, then get overwritten by the slower-arriving broad one. On the server (standalone) the local SQLite IPC returns in ~1 ms so responses always arrive in order; the bug was invisible there. This was the actual cause of "search includes barcode" reports — the broad result the user was seeing wasn\'t matching on barcode at all; it was the no-filter response sneaking in after the filtered one.',
+      'Two-part fix: (1) the search input is now debounced 200 ms — typing "2213" fires ONE query after you stop typing, not four. Feels instant, but eliminates the keystroke storm. (2) Every `refreshProducts()` and `refreshAllProducts()` call captures a sequence number before the IPC fires; when the response lands, the store only commits if no newer call has been issued in the meantime. Belt-and-braces — covers cases other than typing where two refreshes could race (a remote `catalog:changed` event arriving while a user-triggered refresh is mid-flight, etc.).',
+      'Network savings on client mode: typing a 5-character search used to be 5 HTTP roundtrips × 2 lists (filtered + all) = 10 server queries. Now it\'s 2. Multiply by every search every user does on a busy team day and that\'s real load gone.',
+      'Internal — module-level `searchDebounceTimer`, `refreshSeq`, `refreshAllSeq` in `renderer/store/products.js`. Sequence guards live OUTSIDE the slice factory so they survive hot reloads and re-bootstraps without resetting mid-flight. Stale responses are dropped silently; the loading flag stays under the latest call\'s control so the spinner never gets stuck.',
+      'Verified: 100/100 tests pass. Build clean.',
+    ],
+  },
+  {
+    version: '0.49.37',
+    date: '2026-06-01',
+    items: [
+      'CHANGE — Cmd+K global search palette narrowed to match the Library page. Now searches the same three product fields the Library page already searches (sku, name, color_finish). Barcode, secondary code, and description are no longer searched. A v0.49.21 beta tester reported that the Cmd+K palette was returning rows that "matched" but couldn\'t be visually verified — turns out a barcode hit and a name hit look identical in the dropdown (same SKU label, no indication of which field matched). Same reasoning the Library page used back in v0.26.49 when its own search narrowed.',
+      'Where the Library page search stood already: the Library\'s on-page search bar was narrowed to sku/name/color_finish in **v0.26.49** — over a year of releases ago, well before v0.49.21. So clients on v0.49.21 already had the fix for THAT search box. The Cmd+K palette was the remaining surface that searched broadly; v0.49.37 closes the gap so both surfaces behave the same.',
+      'FIX — Library page search input placeholder text was stale. It said "Search SKU, name, color, tags…" but tags haven\'t been searched since v0.26.49. Now reads "Search SKU, name, color…" so what the placeholder advertises matches what actually gets searched.',
+      'If you need barcode lookup, it stays available as a column you can sort and filter products by in the Library table view, and as a field in the Product side-panel. The narrowing only affects the text search.',
+      'Internal — updated `main/db/search.js` globalSearch query: dropped the `barcode`, `secondary_code`, and `description` LIKE conditions; `extra` field on result rows is now always null (callers tolerate the absence — the `palette__extra` span just doesn\'t render when there\'s no value). Verified: 100/100 tests pass.',
+    ],
+  },
+  {
+    version: '0.49.36',
+    date: '2026-06-01',
+    items: [
+      'HOTFIX — Product Library page crashed on every mount with **"Cannot access \'w\' before initialization"**. Introduced by the v0.49.34 Lightbox metadata caption: the new `useEffect` that fetches image dimensions read `current?.filepath` and `effectiveHash` in its dependency array, but those `const`s were declared LATER in the function body (right after the `if (!open) return null` early-return). On every render, React evaluates the deps array immediately when it encounters the hook — so it tried to read `current` while it was still in the temporal dead zone, throwing the TDZ error. The Lightbox crashes during the function-body pass because it\'s mounted as a Library child component (with `open={false}`), so hooks run even when the lightbox is invisible. Affected v0.49.34 + v0.49.35 (which inherited the bug).',
+      'Fix: moved `const current` + `const effectiveHash` ABOVE the metadata-fetch effect. They\'re derived from already-initialized state (`images`, `idx`, `hashOverrides`) and the new code uses `images?.[idx]` so it stays safe when the lightbox is mounted with no images yet. The early-return `if (!open || !images || images.length === 0) return null` stays where it was (Rules of Hooks — hooks must run unconditionally) and the rest of the render-only derivations (`src`, `metaKey`, `meta`) stay after it.',
+      'No other behaviour change. Lightbox metadata caption still works the same once you open the lightbox (and the modals from v0.49.35 still persist their last-used options).',
+      'Verified: 100/100 tests pass. Verified against the built minified bundle that the `const w = …, E = …` declarations now appear BEFORE the `useEffect` deps-array reads them.',
+    ],
+  },
+  {
+    version: '0.49.35',
+    date: '2026-06-01',
+    items: [
+      'CHANGE — The new bulk Convert / Compress / Resize modals now REMEMBER your last picks across runs and across app restarts. Open Resize on Tuesday, set 2000×2000 fit:Cover background:white, run it on group A; open Resize again on Wednesday and those eight fields are still set the way you left them. Same for Convert (target format, quality, scope, strip metadata) and Compress (quality, scope, strip metadata). The v0.49.34 build was resetting to defaults on every open — that was the wrong call for batch workflows where you process group after group with the same spec.',
+      'Each modal\'s footer has a new "Reset to defaults" button on the left. Click it when the remembered picks are stale and you want to start fresh — wipes the stored values and reverts every field in one go.',
+      'Storage is per-Mac (localStorage), schema-versioned, and namespaced (`Library.bulkConvert`, `Library.bulkCompress`, `Library.bulkResize`). If a future release changes the shape of stored options incompatibly, the schema-version bump silently drops the stale blob and starts you over at defaults — no crashes on stored data the new code can\'t read.',
+      'NOT persisted: the in-flight `running` flag (always starts idle each open — otherwise a hard-cancel mid-run could leave the modal looking stuck) and the per-run selection (productIds — those come from your Library multi-select, not the modal).',
+      'Internal — new shared helper `renderer/modules/ProductLibrary/persistedFormState.js` with `loadPersistedFormState` / `savePersistedFormState` / `clearPersistedFormState`. All three modals route through it instead of each rolling its own localStorage code; future bulk modals can plug in the same way without re-implementing the pattern. Returns a fresh-object copy of defaults on every load so React\'s useState init can mutate freely.',
+      'Verified: 100/100 tests pass. Build clean.',
+    ],
+  },
+  {
+    version: '0.49.34',
+    date: '2026-06-01',
+    items: [
+      'CHANGE — Library bulk toolbar "Image operations" menu now has THREE independent tools where there used to be one. The combined "Convert · compress · resize" entry was a wedge of three jobs into one form; split into focused modals: **Convert format** (change to JPEG / PNG / WebP, with quality slider for the lossy formats), **Compress** (re-encode at chosen quality, keep current format — includes quality presets for 60/75/85/92), and **Resize** (pixel dimensions only, near-original quality). All three still call the same `images:reencodeProducts` IPC underneath; the renderer just constrains which knobs each modal exposes.',
+      'FIX — Resize → Exact W×H → fit: Contain now actually shows the padding. The v0.49.29 version was missing the background-colour control entirely, so sharp fell back to its default `{r:0,g:0,b:0,alpha:0}` — which on JPEG output came out as black bars (often interpreted as "broken output") and on PNG/WebP came out as TRANSPARENT bars (often interpreted as "nothing changed", because most image viewers composite transparency onto their own background). The new Resize modal exposes a colour picker + 5 presets (white default, light grey, black, mid grey, near-black). For JPEG outputs the padding is also flattened onto the chosen colour so transparency can\'t leak through.',
+      'FIX — Compress modal at quality 60 used to actually produce a quality-60-lossy file but at a quality-92-sized file. Bug: the same-extension write path routed through a shared helper that re-encoded the already-compressed buffer through sharp at a hard-coded q92, throwing away both the bytes saved AND introducing a second lossy pass on top of the first. Now writes the user-quality buffer DIRECTLY (atomic tmp+rename); no second encode. Files come out at the size you actually asked for.',
+      'FIX — Resize is now EXIF-orientation aware. A portrait phone photo with `Orientation:6` used to get resized in its un-rotated landscape pixel grid, so a "2000×3000 portrait" output came out 3000×2000 landscape in viewers. Now the rotation is baked first, so the W×H you ask for matches what you see.',
+      'NEW — Image-metadata caption in the Lightbox preview. When you open any product image in the lightbox (Library row thumb / grid card / side-panel ProductForm), the dimensions, megapixel count, file size, format, alpha-channel flag, and short content hash now appear in a small monospace strip below the image: `2000 × 2000 · 4.0 MP · 1.4 MB · JPEG · sha:a3f24b91`. Backed by a new `images:getMetadata` IPC that reads sharp().metadata() + fs.stat — header-only, takes <10 ms locally, so it\'s safe to re-fetch on every slide change. Hash is the same SHA-1 that cache-busts thumbnails, so post-edit captions invalidate automatically — no stale "1.4 MB" showing on an image you just resized.',
+      'NEW — Quality presets in the Compress modal. Four chips: Aggressive (60), Balanced (75), Catalog default (85), Near-original (92). One-click anchors so you don\'t have to pixel-aim the slider for the standard targets. Custom values via the slider still work.',
+      'Internal — added `images:getMetadata` IPC (preload + client-mode RPC allow-list); added `background` (hex) to the `images:reencodeProducts` `resize` arg, mapped through to `sharp.resize({background})` for `contain` fit and to a defensive `sharp.flatten({background})` for JPEG outputs; deleted `BulkReencodeModal.jsx`; added `BulkConvertModal.jsx`, `BulkCompressModal.jsx`, `BulkResizeModal.jsx`. Audit log entry now records the resize args so a forensic "what dimensions did I pick" question is answerable.',
+      'Verified: 100/100 tests pass. Build clean.',
+    ],
+  },
+  {
+    version: '0.49.33',
+    date: '2026-05-31',
+    items: [
+      'CHANGE — Background removal is now one engine, not two. The paid **remove.bg** cloud option has been removed; the bundled **local @imgly** engine is the only path. Reason: the remove.bg option added a second failure surface (HTTPS to a third party + API key + monthly quota counter) that kept tripping testers up, while the local engine has been good enough on M-series Macs for the catalog work this app is built for. One less thing to configure, one less thing to break.',
+      'FIX — Bg-removal model download on client-Macs (the "always not working on the client server" bug). Root cause: the renderer\'s Content-Security-Policy in **client mode** never whitelisted `https://staticimgly.com`, where the ~80 MB @imgly model lives. Standalone mode allowed it; client mode didn\'t. Every fetch was being silently dropped by the CSP, surfacing as an opaque "no available backend" / "Failed to fetch dynamically imported module" error that looked like a model loader bug. v0.49.33 adds the same allow-listing client mode was missing — first run pulls the model the same way standalone does; subsequent launches are offline.',
+      'Settings → AI Generation simplified: the "Background removal engine" picker, the "remove.bg API key" field (with Test connection button + show/hide), and the "remove.bg usage this month" counter are all gone. What stays: **Pre-download local model** + **Local model cache** (size, files, last activity, Refresh + Clear) — those are the controls that actually matter for the local engine.',
+      'Workspace side panel: the Local / remove.bg toggle that appeared when you turned on "Remove background" is gone. Replaced with a one-line hint pointing at Settings → AI Generation → Local model cache for the pre-download.',
+      'Bulk background removal modal (Library → Image operations → Remove background): the "Engine: remove.bg (cloud)" footer line is gone too, and the "no API key" warning that disabled the Run button can no longer fire — there\'s no key to forget anymore.',
+      'Better error message when the model genuinely fails to download (no internet, corrupted cache, etc.): no more "Switch to remove.bg in the Workspace settings panel" advice — that engine doesn\'t exist. The new copy points at Settings → AI Generation → Local model cache + the "Download model now" button, which is the path that actually fixes it.',
+      'Internal — removed: `settings:testRemoveBg` and `settings:bumpRemoveBgUsage` IPC handlers; `testRemoveBg` / `bumpRemoveBgUsage` from preload + the client-mode RPC proxy allow-list; `bgRemovalEngine` / `removeBgApiKey` / `removeBgUsage` from `defaultConfig()` (old configs that still have these keys are harmless — we just ignore them); `removeBgApiKey` + `bgRemovalEngine` from `PORTABLE_CONFIG_KEYS` (server-bundle export no longer carries them); the entire `removeViaRemoveBg()` path + the `engine` / `apiKey` opts from `renderer/lib/bgRemoval.js`; the `appConfig` Zustand mirror keys for bg-removal (the object stays, ready for future mirrored config). CSPs in `main/index.js` and `renderer/index.html` updated to drop `https://api.remove.bg` and (in client mode) add `https://staticimgly.com`.',
+      'Verified: 100/100 tests pass. Build clean.',
+    ],
+  },
+  {
+    version: '0.49.32',
+    date: '2026-05-31',
+    items: [
+      'NEW — Backups. Settings has a new "Backups" tab (standalone / server mode). "Create backup now" packs a consistent snapshot of your database + all image assets + your AI keys & presets into a single `.iskhbackup` file. The DB snapshot uses SQLite\'s online backup, so it\'s safe to run while you\'re working — no need to quit first.',
+      'Where backups live: a `backups/` folder inside your data folder by default (so they travel with the data, and that folder is excluded from each backup — no backups-inside-backups). Point them at an external drive instead via Settings → Backups → Backups folder → Change…',
+      'The Backups list shows each backup\'s date, relative age, size, and filename, newest first. "Reveal" opens it in Finder; "Restore…" replaces the current data folder from that backup. Restore is gated behind a danger confirm that shows what\'s inside the backup first, and your current data is RENAMED ASIDE to a timestamped `…pre-restore.<time>` folder (never deleted) so you can recover from Finder if anything looks wrong. The app restarts automatically after a restore.',
+      'Safety net before destructive bulk ops: bulk delete, duplicate-merge purge, bulk re-encode (overwrites originals), and changing the data folder now show "Last backup: 3 days ago · [Create backup now]" right in the confirm dialog, so you can make a fresh backup without leaving the flow.',
+      'macOS-local + conservative by design — nothing is uploaded anywhere, and no existing data is ever deleted except by an explicit Restore confirmation (and even then the prior data is moved aside, not erased).',
+      'Internal — new `main/backupManager.js` (mirrors the serverBundle tar.gz + `db.backup()` approach), `backups:*` IPC (local-only, stubbed in client mode like serverBundle), and `main/util/backupSafety.js` for the path-traversal + manifest-validation guards. The safety helpers are unit-tested (`test/backupSafety.test.js`) since a restore extracts an archive over your data folder.',
+    ],
+  },
+  {
+    version: '0.49.31',
+    date: '2026-05-31',
+    items: [
+      'Internal — Vite bundle size warning addressed via route-level lazy loading + manual vendor chunks. Main renderer chunk dropped from **1,878 KB → 633 KB** (-66%). No functional change: every page still works the same; the only user-visible difference is a brief "Loading…" spinner the first time you navigate into a heavy route (typically resolves in under 50 ms on local Electron).',
+      'Lazy-loaded routes (via `React.lazy` + `Suspense`): Image Workspace, AI Studio, Overlay Studio, Export Center, History. Each ships as its own chunk that downloads only when you navigate to it.',
+      'Kept eager: Dashboard (default landing), Product Library (most common landing), Companies, Brands, Settings, Support. Lazy-loading these would just paint a load flash on every boot for zero perceptual win.',
+      'Manual vendor chunks: react + react-dom + scheduler → `vendor-react` (142 KB). @imgly background-removal wrapper → `vendor-imgly` (84 KB, loads only when you run bg removal). bwip-js barcode renderer → `vendor-bwip` (943 KB, loads only when Overlay Studio opens). Converting bwip-js to dynamic-import inside `renderBarcodeSVG` would change its signature from sync → async (caller behaviour change, prohibited by spec) — so it lives in a vendor chunk that\'s code-split off the boot path instead.',
+      'Threshold note: Vite\'s default 500 KB warning is calibrated for web apps fetching over HTTPS. This is Electron with the renderer loading from a local file inside the asar — a 1 MB chunk reads in ~15 ms. Bumped `chunkSizeWarningLimit` to 1000 KB with rationale documented in vite.config.js. NOT a "hide the problem" bump: it covers the on-demand vendor-bwip chunk that genuinely can\'t shrink without changing API.',
+      'Boot weight (eagerly downloaded on app start): ~929 KB total (main 633 + vendor-react 142 + CSS 154). Was ~2.0 MB. The AI Studio / Overlay / Workspace / Export / History routes account for another ~157 KB combined, downloaded on-demand.',
+      'Verified: 100/100 tests pass. Build produces no warnings.',
+    ],
+  },
+  {
+    version: '0.49.30',
+    date: '2026-05-31',
+    items: [
+      'CHANGE — Library bulk toolbar regrouped into a clearer hierarchy. Now reads: `AI Studio →  ·  Image operations ▾  ·  Edit fields  ·  Delete N  ·  Clear`. AI Studio stays its own top-level button because it has cost + provider-queue implications — doesn\'t belong sharing a menu with free local sharp passes. Image operations groups the five image-changing bulk modals (background removal, auto-crop / reframe, enhance, convert · compress · resize, apply overlay). Edit fields stays inline because it\'s metadata-only (doesn\'t touch image bytes).',
+      'Inside the Image operations menu, items are split into two labelled sections so you see WHAT each action does to your originals before clicking: **Non-destructive · original kept** (Remove background, Apply overlay) and **Destructive · overwrites originals** (Auto-crop / reframe, Enhance, Convert · compress · resize). Each item still has its one-line hint from v0.49.29.',
+      'Nothing\'s gone — every existing bulk modal (BulkBgRemovalModal, AutoCropRunModal, AutoEnhanceRunModal, BulkReencodeModal, BulkOverlayRunModal, BulkProductsAIRunModal, BulkEditModal) is reused as-is. This patch only changes how the buttons that open them are laid out.',
+      'Tooltips on the top-level buttons explain WHY each is separate: AI Studio = "Queues a paid AI generation for each — confirms cost before running." Edit fields = "Bulk-update metadata fields — doesn\'t touch the image bytes."',
+      'Role gating unchanged — the entire `.lib-bulk-toolbar` is hidden for Viewer / Photographer roles via the existing CSS rule, so the new menu inherits that automatically. No per-action gating needed.',
+      'Intentionally unchanged: Duplicate Merge stays in Settings as a maintenance/admin tool (not an everyday image op). The single-product "Process →" router on each card stays — that\'s a NAVIGATION pattern (send this product to Workspace / AI Studio / Overlay), distinct from the bulk action runner. Import / Auto-match stay where they are (header actions, not selection-driven).',
+    ],
+  },
+  {
+    version: '0.49.29',
+    date: '2026-05-31',
+    items: [
+      'NEW — pixel resize folded into the "Convert · compress · resize" bulk modal. Same sharp pass handles all three (resize → format → quality), so they\'re one tool now. Picker offers: "Don\'t resize" (default), "Max long edge (preserve aspect)" with a single px input (most common — cap everything at e.g. 2000px for web), or "Exact width × height" with cover / contain / fill fit modes. Long-edge mode never upscales — images already smaller than the cap are left alone, which avoids the "blurry thumbnails" gotcha.',
+      'Resize runs BEFORE compression so the encoder sees the smaller pixel dims (more compression in fewer bytes). For typical catalog: long edge 2000 + WebP quality 85 = often 70-80% file-size reduction vs the original PNG.',
+      'CHANGE — the Library bulk toolbar collapsed from 9 buttons (Generate / Edit wall) into one "Bulk actions ▾" dropdown with categories. Delete and Clear stay inline because they\'re different: Delete is destructive (deserves its own affordance, no nesting), Clear is the escape hatch.',
+      'Menu categories: **Generate** (AI Studio, Overlay) and **Edit** (Enhance, Auto-crop, Remove background, Convert · compress · resize, Edit fields). Each item shows a one-line hint so you don\'t have to remember what each does. Esc or click-outside closes the menu.',
+      'New actions added later slot into a category (or a new one — Manage / Export / etc.) without making the toolbar wider. The 280px panel can hold ~12 items comfortably; if it ever needs more we just add scroll.',
+      'The single-item "Process →" router on each product card is unchanged — that\'s a NAVIGATION pattern (send this product to Workspace / AI Studio / Overlay), not a bulk action runner. Two different mental models, kept separate.',
+      'Internal — `images:reencodeProducts` IPC extended with a `resize: { mode, longEdge | width+height+fit }` field. Clamped server-side to 16-8000 px so a stray zero doesn\'t blow sharp\'s allocator on a 50MP source. New inline `BulkActionsMenu` component (not a generic Popover primitive since this is the only caller; extract if a second popover ever shows up).',
+    ],
+  },
+  {
+    version: '0.49.28',
+    date: '2026-05-31',
+    items: [
+      'NEW (desktop) — bulk "Convert / compress" action in Library. Select N products → click the button on the bulk toolbar → modal opens with: Target format (Keep / JPEG / PNG / WebP), Quality slider (1-100; ignored for PNG which is lossless), Scope (main image of each product, or all images), Strip metadata toggle (default ON). Click Re-encode → sharp processes each image in place.',
+      'Two operations, one tool — convert and compress are the same sharp.toFormat() call with different knobs, so they share one IPC (`images:reencodeProducts`) and one modal. Pick a different target format → conversion. Pick "Keep current format" → pure compression in place.',
+      'Behaviour: destructive (overwrites the source bytes). When format changes, the file extension changes too — the file is renamed on disk (e.g. `KT-205-1.png → KT-205-1.jpg`) and the DB row\'s filepath is updated to follow. content_hash + perceptual_hash refresh automatically so dedup + cache-busting stay accurate. Crash-safe: writes to a tmp file then atomic-rename.',
+      'Toast on completion reports both image count AND bytes saved — so you can see exactly how much compression bought you. Failures (corrupt source / unsupported input) are counted and listed in the toast text instead of failing the whole batch.',
+      'Common workflows this unlocks: (1) bulk HEIC → JPEG after importing iPhone photos, (2) bulk PNG → WebP to shrink catalog before web export (often 30-50% file size reduction at quality 85), (3) JPEG quality 95 → 80 to compress without format change.',
+      'Internal — new `productImages.setFilepath()` DB helper for the rename-and-follow case. The atomic write uses the same `__reencode-<uuid>.<ext>` tmp-then-rename pattern as the existing reframe / autoEnhance writers, so a mid-write crash never leaves a partial file.',
+      'Per-image quick action in the Workspace toolbar is a natural follow-up if you want it; this patch ships the bulk path because that\'s where format conversion typically lives (one-off per-image edits are easier in Workspace via the existing tools).',
+    ],
+  },
+  {
+    version: '0.49.27',
+    date: '2026-05-31',
+    items: [
+      'Full audit + hardening of the fal.ai flow after this string of bugs (v0.49.16 onwards). I read fal\'s actual API docs (the llms.txt schema for `openai/gpt-image-2/edit`), fal-js\'s queue source on GitHub, and probed the live endpoints with curl to ground every decision in fact instead of guesses. Findings:',
+      'Confirmed — `queue.fal.run` only accepts POST on status + result endpoints; GET returns HTTP 405 with `Allow: POST` in the header. fal-js routes through `fal.run` which accepts both, which is why their client uses GET. Our v0.49.23 POST switch was correct.',
+      'Confirmed — response shape for the new endpoint is `{images: [{url, height, content_type, width, file_name}]}` per fal\'s llms.txt. Our v0.49.21 extractor handles this correctly, but only knew about the standard shape.',
+      'Hardened — extractor now tries 4 known shapes (`{images: [...]}`, `{image: ...}`, `{output_url: "..."}`, `{data: {images: ...}}`) and logs to stderr when it falls through to a non-standard one. If fal returns a shape we don\'t know, we capture the raw body (first 300 chars) in the task error message so we can diagnose without guessing.',
+      'Hardened — every fal HTTP call now goes through a single helper that POSTs first, falls back to GET on 405. If fal flips method requirements again, this absorbs it without a code change. Verbose stderr logs identify which task + which step failed.',
+      'NEW — "Repair" button now appears on tasks stuck in `running` state for > 5 minutes (with a providerTaskId). That covers the "fal says success but our app shows running forever" failure mode — Click → forces a re-poll instead of waiting on whatever the auto-poll missed.',
+      'Why the user\'s task didn\'t download in v0.49.26: most likely the result fetch hit a transient error (timeout, network blip, or a one-off non-standard response) and the silent "no URLs" path swallowed it. With v0.49.27\'s stderr logs + raw-body capture in the error message, the next failure mode will be visible — not silent.',
+    ],
+  },
+  {
+    version: '0.49.26',
+    date: '2026-05-31',
+    items: [
+      'Fix (desktop / AI Studio) — fal HTTP 422 "Error validating the input" on every GPT Image-2 task. I had the `image_size` shape backwards for this whole batch. fal\'s actual error message (visible only on the fal dashboard) said: "Input should be \'square_hd\', \'square\', \'portrait_4_3\', \'portrait_16_9\', \'landscape_4_3\', \'landscape_16_9\' or \'auto\'." So fal\'s API wants their GENERIC enum strings, not OpenAI\'s pixel sizes ("1024x1024" etc) that v0.49.16-v0.49.25 were sending. The pricing matrix on the fal page shows pixel sizes (1024×768, 1024×1024, …) — those are OUTPUT dimensions that fal derives internally from the enum; you don\'t pass them.',
+      'Corrected mapping: 1:1 → `square_hd`, 4:3 → `landscape_4_3`, 3:4 → `portrait_4_3`, 16:9 → `landscape_16_9`, 9:16 → `portrait_16_9`, auto → `auto`. The Quality + Resolution dropdowns + the v0.49.25 endpoint move stay correct; this is the last piece needed for the request to actually validate.',
+      'NEW — 9:16 added to the GPT Image-2 size list. The full set is now supported (auto / 1:1 / 4:3 / 3:4 / 16:9 / 9:16).',
+      'How I caught it this time: you opened the fal dashboard, copied the task ID (the v0.49.24 button paid off here), and the dashboard showed the actual server-side validation error verbatim. Worth keeping that button — there\'s a meaningful class of bugs where we can only see fal\'s side via their UI.',
+    ],
+  },
+  {
+    version: '0.49.25',
+    date: '2026-05-31',
+    items: [
+      'NEW (desktop / AI Studio) — fal moved GPT Image-2 to a new namespace at `openai/gpt-image-2/*`. The old `fal-ai/gpt-image-2/*` endpoints still respond, but the new ones are the officially-documented ones (per https://fal.ai/models/openai/gpt-image-2/edit). The picker now shows the new "GPT Image-2 · Edit" and "GPT Image-2 · Text-to-Image" (without the "fal · " prefix) which point at the new endpoint. The old fal entries stay in the catalog but are hidden from the picker — they only resolve in costs.js for already-queued tasks that haven\'t finished yet.',
+      'NEW (desktop / AI Studio) — Quality dropdown for GPT Image-2 (auto / low / medium / high). This is the lever you asked about — cost varies ~6× between low and high on the same image size. Real numbers from fal\'s page for 1024×1024: low=$0.015, medium=$0.061, high=$0.219. The "auto" default lets the model pick (usually medium-equivalent). If you want fast + cheap iteration runs, pick low; for final catalog hero shots, high.',
+      'Fix (desktop / AI Studio) — refreshed cost estimates against the real pricing matrix from fal\'s page. Was $0.042; now $0.061 for 1024×1024 medium quality, which is the more honest default. The estimator still encodes a single number per model (it can\'t express size × quality variance yet), so the displayed estimate may be off for non-1024×1024 or non-medium runs.',
+      'Internal — also expanded the W:H → fal-image_size mapping for GPT Image-2: 16:9 now maps to 1920×1080 (only on the new `openai/gpt-image-2/*` endpoint per fal\'s schema); 4:3 mapped from `1536x1024` (wrong, fal doesn\'t accept that) to `1024x768` which matches their pricing matrix.',
+    ],
+  },
+  {
+    version: '0.49.24',
+    date: '2026-05-31',
+    items: [
+      'NEW (desktop / AI Studio) — "Copy ID" button on every queue row that has a provider task ID assigned (i.e. the task has at least made it past submit). Click → copies the provider\'s task ID to your clipboard and toasts where to paste it: "Open fal.ai/dashboard/requests and search" or "Open kie.ai/logs and search." This unblocks the "my task has been stuck at 5% for 30 minutes and I have no way to investigate" scenario you hit on the live build — you can now go to the provider\'s own dashboard and find out whether the request is genuinely queued, errored on their side, or sitting in OpenAI\'s GPT Image-2 backlog.',
+      'Context — fal.ai\'s status page is operational (verified at status.fal.ai) when this issue happens, so it\'s almost always the OpenAI GPT Image-2 backend behind fal that\'s slow. fal queues the request, OpenAI takes its time, fal can\'t make it faster. Same pattern on kie.ai\'s GPT Image-2 since they\'re both wrapping the same upstream. The "Copy ID" affordance is the lightest fix to give you observability without us having to build a full provider-dashboard inside the app.',
+      'Visible on running, queued, and failed tasks (anywhere the provider has a record). Hidden when there\'s no providerTaskId — the task hasn\'t made it through submit yet, so there\'s nothing to look up.',
+    ],
+  },
+  {
+    version: '0.49.23',
+    date: '2026-05-31',
+    items: [
+      'Fix (desktop / AI Studio) — fal.ai HTTP 405 on every task. fal silently changed the queue status + result endpoints from GET to POST: `curl -I https://queue.fal.run/<model>/requests/<id>/status` now responds with `Allow: POST`. Our poll loop was still issuing GET, so every fal task came back as "HTTP 405 Method Not Allowed" the moment we tried to check on it — even though the submit (POST) had gone through fine. Now sends POST with an empty `{}` body on both the status and the result endpoint, same pattern fal\'s own client uses now.',
+      'Same fix applied to the connection test (Settings → Test fal.ai key) which was using the same status endpoint as a health probe.',
+      'How I caught it: hit fal\'s endpoint with `curl -X OPTIONS` to read the `Allow:` response header — it explicitly listed `POST`. Then a one-line tweak to method + body. The v0.49.22 storage-upload fix (two-step initiate → PUT) was correct and stays as-is; this is a separate breakage in a different part of the same flow.',
+      'Documented at https://docs.fal.ai/queue technically still says GET, so fal\'s docs are out of sync with their deployment — left a note in the code so we don\'t accidentally flip it back if someone reads the docs and "fixes" it.',
+    ],
+  },
+  {
+    version: '0.49.22',
+    date: '2026-05-31',
+    items: [
+      'Fix (desktop / AI Studio) — fal.ai source upload failing with "fal storage upload failed: Not Found." The legacy single-POST `/storage/upload` endpoint was retired by fal; current API is a two-step initiate → presigned-PUT flow. Now: (1) POST `${HOST}/storage/upload/initiate` with JSON `{content_type, file_name}` → response `{upload_url, file_url}`, (2) PUT the raw bytes to upload_url, (3) pass file_url to the model. This unblocks GPT Image-2 on fal again (which had `requiresFalStorage: true` since v0.49.16 because it rejects inline data URLs).',
+      'Fix (desktop / AI Studio) — refreshed fal.ai per-image pricing in the cost estimator. GPT Image-2 was $0.045 → now $0.042 (fal\'s documented medium-quality 1024×1024 rate). Nano-banana was $0.035 → now $0.039 (now priced per-megapixel, ~$0.039 at our 1024-ish defaults). Honest caveat: 1024×1536 / 1536×1024 cost ~$0.063 at medium but the cost table can\'t encode size variance yet — the estimate is for the 1:1 case.',
+      'Clarify (desktop / AI Studio) — Resolution dropdown hint now spells out what 1K / 2K / 4K mean in pixels. "1K ≈ 1024 px on the long edge, 2K ≈ 2048, 4K ≈ 4096. 1K is required for 1:1 / auto aspect." Easy to confuse the K tier (kie.ai-specific) with fal\'s `image_size` enum (a flat 1024×1024 number), which was the root of the "cheap?" question.',
+      'On the per-image cost: 1K on kie\'s GPT Image-2 image-to-image is $0.045 in our table (also a documented kie rate), so it\'s in the same band as fal\'s default. The "fal looks cheap" perception probably comes from fal\'s lower-quality tier ($0.011 for low quality 1024×1024) — but we don\'t expose the quality knob, so we get fal\'s default ("medium" / "auto") which is the $0.042 figure.',
+    ],
+  },
+  {
+    version: '0.49.21',
+    date: '2026-05-31',
+    items: [
+      'Fix (desktop) — the What\'s new modal was using the default narrow modal size, which wasted a ton of horizontal real estate on a 1080p+ screen and made long changelog bullets wrap into tall, thin paragraphs. Now uses the `xxl` modal size (~92% of viewport width), so paragraphs are wide enough to read comfortably and you can see more entries per scroll.',
+    ],
+  },
+  {
+    version: '0.49.20',
+    date: '2026-05-31',
+    items: [
+      'Four batches from the desktop editing audit landed together (versions 0.49.17 through 0.49.20). Each piece below maps to a row from the original "bloat + missing features" audit.',
+      'v0.49.17 (Rotate consolidation) — the 90° rotate left / right / reset buttons moved out of the SettingsPanel "Orient" section and into the canvas tools row, alongside Crop. Rotation is a workspace-wide setting, not crop-specific, so they\'re always visible (not gated by crop mode). The "Reset N°" button only shows when there\'s a non-zero rotation to clear. The SettingsPanel "Orient" section is gone; settings panel now holds only durable per-session knobs (canvas size, background, watermark, enhance, tone, detail).',
+      'v0.49.18 (Tone + Detail panels) — two new SettingsPanel sections covering the biggest "missing standard feature" gaps from the audit. **Tone** has one slider for now: Exposure (-100..+100, true stop scale — ±100 = ±1 stop, multiplicative like Lightroom\'s exposure knob, NOT additive like the existing Brightness slider). Highlights / Shadows / Whites / Blacks would need a proper LUT pass and are coming when that plumbing lands. **Detail** has Sharpen (0..100, sharp\'s unsharp mask with sigma scaling 0.5 → 2.5) and Noise reduction (0..100, sharp\'s median filter with window size 3/5/7). Both no-op at 0 so they don\'t cost time on images that don\'t need them.',
+      'v0.49.19 (Unify Enhance) — Workspace\'s "Auto-adjust" toggle used to be a simple sharp.normalize() (luminance stretch only) while the Library bulk Enhance modal ran the richer white-balance + auto-levels + saturation + brightness stack. Now they\'re the same: Workspace\'s autoAdjust calls util/autoEnhance.js with the same defaults the bulk modal uses. One mental model, same look across both.',
+      'v0.49.20 (Unify watermark) — bridge from Workspace watermark → Overlay templates. When you have a watermark configured in Workspace (logo, corner, opacity), a new "Save as Overlay template…" button appears below the opacity slider. Click it → type a name → a full Overlay template gets created with the watermark as an image element at the matching corner / opacity / 18% width. Then bulk-apply that template across N products via Library\'s bulk overlay flow. Pre-v0.49.20 the two systems were parallel; now there\'s a one-click path between them.',
+      'Nothing was deferred. The audit\'s Batch A → D are all shipped. Highlights / Shadows / Whites / Blacks are the only standard editor feature still missing (Sharp doesn\'t have a direct LUT op, so a proper tone-curve implementation needs more thought — that\'s its own batch).',
+    ],
+  },
+  {
+    version: '0.49.16',
+    date: '2026-05-31',
+    items: [
+      'Fix (desktop / AI Studio) — fal.ai\'s GPT Image-2 image-to-image (Edit) was unusable: requests either silently 422\'d or the aspect picker didn\'t even appear. Three things were wrong: (1) the model entry had no `sizes` field, so the UI hid the aspect picker entirely; (2) the fal uploader returned inline base64 data URLs for images ≤ 4 MB, but fal-ai/gpt-image-2/edit-image\'s `image_urls` field rejects data URLs — it needs fetchable HTTPS URLs from fal storage; (3) fal\'s GPT Image-2 endpoint accepts only a tight enum of sizes ("auto" / "1024x1024" / "1024x1536" / "1536x1024") — sending our W:H labels through unchanged was a 422.',
+      'All three fixed: GPT Image-2 (both Edit and Text-to-Image) now exposes aspect chips for `auto / 1:1 / 4:3 / 3:4`. The fal provider opts into storage upload via a new `requiresFalStorage` model flag (other fal models — nano-banana, seedream — keep the data-URL shortcut). The submit body maps W:H → the GPT Image-2 enum server-side. 16:9 and 9:16 are intentionally NOT exposed because the endpoint doesn\'t support them.',
+      'NEW (desktop) — crop tool edge handles. v0.49.15 shipped 4 corner handles only; v0.49.16 adds N / S / E / W edge handles for resizing one dimension at a time. With a locked aspect ratio, edge drags recenter the perpendicular axis automatically (so a 1:1 crop stays square as you pull the top edge down). Same `data-crop-handle` dispatch as corners.',
+      'NEW (desktop) — Straighten slider in the crop tool. Range -45° to +45° with 0.1° steps. While you drag, the image inside the canvas tilts visually so you can level a horizon / product baseline against the dashed cyan reference line at the canvas center; the crop frame stays axis-aligned. On Apply, the server runs `sharp.rotate(angle, {background: white})` BEFORE extracting the crop region — so the output is genuinely straightened, not just visually rotated.',
+      'Internal — `images:cropImage` + `images:cropPreview` accept an optional `straighten` field (-45..+45, clamped server-side). When 0, no extra sharp pass; otherwise one pre-extract rotate. `workspaceSettings.cropStraighten` is the persisted value so reopening a session keeps your tilt.',
+      'Deferred — 90° rotate consolidation (the existing buttons in the Settings Panel stay where they are for now). Will collapse into the crop toolbar if it bothers you in practice.',
+    ],
+  },
+  {
+    version: '0.49.15',
+    date: '2026-05-30',
+    items: [
+      'NEW (desktop) — proper aspect-ratio Crop tool in Image Workspace. Toggle the Crop button on the canvas toolbar; an aspect-ratio bar drops down underneath with chips: Free / 1:1 / 4:3 / 3:4 / 16:9 / 9:16 / Custom. Pick a ratio, drag a rectangle on the canvas (constrained to the ratio), then hit Apply crop. The output dimensions actually match the chosen ratio — unlike the old crop pipeline which extracted the region and then stretched it back into the canvas size. This was the explicit gap you flagged in the audit.',
+      'Custom ratio: pick the Custom chip → two numeric W:H inputs appear → type your ratio (e.g. 5:4 or 2.39:1 for cinematic) → tap Apply ratio. The custom ratio is persisted in workspace settings the same way the standard ones are.',
+      'Crop rect interactions: 4 corner handles for resize (NW / NE / SW / SE) — corners snap to the locked ratio. Drag anywhere inside the rect to MOVE it (cursor changes to ✥). Drag on empty canvas to start a new rect. Switching aspect chips re-shapes any existing rect around its center, so you don\'t lose your position.',
+      'Destination toggle next to Apply: "Save as new" (default — adds a cropped copy as a new product image; original raw stays) or "Overwrite source" (rewrites the source file on disk — confirms before it commits). Matches the safety model you picked.',
+      'Backend — new `images:cropPreview` + `images:cropImage` IPCs. The commit IPC accepts `{productId, filepath, rect: {x,y,width,height}, destination: \'newImage\' | \'overwrite\'}`. Renderer sends normalised 0..1 coords; server resolves to actual source-pixel dimensions on the way in, so the wire format stays resolution-independent. Atomic in-place write for overwrite mode (same contract as Reframe / Auto-crop); cap check + audit log for newImage mode.',
+      'Edge handles (N/S/E/W) — coming in v0.49.16. Free-angle straighten slider — also v0.49.16. The 90° rotate buttons get folded into the crop tool in v0.49.17.',
+    ],
+  },
+  {
+    version: '0.49.14',
+    date: '2026-05-30',
+    items: [
+      'NEW (iPad / iPhone) — ◫ Overlay button in the product detail toolbar. Applies one of your saved overlay templates (from desktop Overlay Studio) to the product\'s main image. Sheet opens with a live preview at the top, a horizontal scrolling strip of template cards in the middle (tap to switch), and a Destination chip pair below: "Append (new image)" or "Replace main." Default is Append — non-destructive, original images untouched.',
+      'Different shape from Reframe & crop / Enhance: Overlay PRODUCES a new image rather than editing existing pixels, so there\'s no scope picker. Source is always the main image (matches the desktop\'s `templates:applyToProduct` semantics). Multi-select doesn\'t apply here — it\'s a per-product operation by design.',
+      'Picked template + destination persist per-device — open the sheet a second time and your last choice is already selected, preview already rendering. Stale-templateId guard: if you delete a template from desktop, the mobile sheet quietly drops the saved id and you pick fresh.',
+      'Live preview via `templates:renderPreview` (same IPC the desktop\'s Overlay Studio uses for its inline preview). What you see is what the server will composite — no client-side approximation.',
+      'Empty-state handling: if no templates exist on this company, the strip says "No templates yet. Create one in Overlay Studio on the desktop." (Mobile is intentionally view + apply — template authoring stays desktop-only.)',
+      'Role-gated: Viewer + Photographer don\'t see the button.',
+      'This wraps up the four-action edit batch (Reframe & crop / Enhance / Overlay) on mobile + the multi-select foundation. The detail header toolbar is now a single-line horizontal carousel (added v0.49.11) — easy to extend if we add more actions later.',
+    ],
+  },
+  {
+    version: '0.49.13',
+    date: '2026-05-30',
+    items: [
+      'NEW (iPad / iPhone) — ✨ Enhance button in the product detail toolbar. Auto white-balance + auto-levels + saturation/brightness boost — the same desktop "fix the hand-taken phone shot" pass, on mobile. Goes through the same sheet pattern as Reframe & crop: live preview at the top, Apply to scope chips (Main / Selected / All), Strength chips (Subtle / Normal / Punchy), Cancel + Apply. Defaults persist per-device.',
+      'Strength presets: Subtle = saturation × 1.03 / brightness × 1.00 (gentle nudge for nice-shot product photos). Normal = 1.08 / 1.00 (matches the desktop default — what most catalog images want). Punchy = 1.18 / 1.05 (for flat phone shots that need pop; goes slightly bright so dim hand-taken images don\'t end up grey).',
+      'Honours multi-select. If you long-pressed three tiles and tapped Enhance, the sheet opens with scope pre-set to "Selected (3)" and the preview shows the first selected image in gallery order. No extra taps.',
+      'Live preview via `images:autoEnhancePreview` — same RPC the desktop\'s enhance panel uses, same stale-response guard as Reframe so flipping through strength chips can\'t paint the wrong preview.',
+      'Internal — `images:autoEnhanceProducts` now accepts an optional `filepaths` array, overriding `scope: \'main\' | \'all\'` when supplied. The mobile flow always knows the exact filepaths it wants from the scope picker. Backwards-compatible: desktop callers don\'t pass `filepaths`, so the old `scope` semantics are unchanged. Mirrors the same extension we did for `images:autoCropProducts` in v0.49.8.',
+      'Role-gated: Enhance button hidden for Viewer + Photographer (same as Reframe & crop). Server still 403s the RPC regardless.',
+    ],
+  },
+  {
+    version: '0.49.12',
+    date: '2026-05-30',
+    items: [
+      'NEW (iPad / iPhone) — multi-select images inside a product. Long-press any tile in the gallery (writer roles only) → enters select mode. A sticky bar appears above the gallery: "N selected · Select all · Done." Tap any other tile to toggle it. Empty circles appear on every tile so the selection affordance is visible; filled blue ✓ on the ones you\'ve picked.',
+      'In select mode the per-tile ⋯ + ← → reorder arrows hide — those actions are single-image and would conflict with the bulk semantics. They come back when you tap Done. The image-preview lightbox is also disabled; tap = toggle, not preview.',
+      'Reframe & crop sheet now has a third scope chip — "Selected (N)" — that appears whenever you open the sheet with a selection active. Defaults to that scope automatically, since your selection IS the intent. The preview source jumps to the first selected image in gallery order so what you\'re looking at is one of the ones actually about to change.',
+      'Scope picker (the v0.49.8 sheet used by future Enhance / Overlay) also gets the "Selected (N)" row — same wiring, slots in between "This image" and "All images" so the list reads narrowest → widest.',
+      'Long-press triggers on a 500ms hold without > 10px movement. Scrolling the gallery doesn\'t accidentally enter select mode; a quick tap doesn\'t either. iOS Safari\'s native long-press image-save sheet is suppressed via `-webkit-touch-callout: none` on the tiles, so Save still works via the ⋯ menu\'s "Save image to device" row (v0.49.6).',
+      'Selection clears when you close the detail sheet, switch products, or tap Done. There\'s no persisting selection across products — multi-select is intentionally one-product-at-a-time on mobile (the no-bulk-across-products rule still holds).',
+      'Foundation for v0.49.13 (Enhance) + v0.49.14 (Overlay) which will both honour the same "Selected (N)" scope from day one.',
+    ],
+  },
+  {
+    version: '0.49.11',
+    date: '2026-05-30',
+    items: [
+      'Fix (iPhone / iPad) — product detail header was wrapping action buttons onto three rows on iPhone (↻ 360° on its own row, ✂︎ Reframe & crop on its own row, ＋ Add photo on its own row). Now a single horizontal-scroll carousel — same pattern as the gallery below. You see roughly the first two buttons; swipe left to reveal the rest. Stays one line forever, so when we add Enhance + Overlay in the next two batches the row just keeps extending instead of cascading into a four-row header.',
+      'iPad layout unchanged — there\'s room for all three buttons on one line on a wider viewport, so no scroll needed. The carousel kicks in only below 640px.',
+      'Fix (iPad / iPhone) — Reframe & crop preview is now BIG. Was capped at 42vh (~140px on iPhone, ~310px on iPad) so you couldn\'t actually evaluate the result before committing. Now width-driven (square) up to 75vh — fills most of the visible viewport, controls live below the fold ready to scroll. `flex-shrink: 0` locks the size so the flex column can\'t squish it back down to make room for the chip rows. You wanted big preview + scroll for controls; that\'s what you get now.',
+      'On iPhone 14-ish width (~390px) the preview is now 390 × 390 px instead of 390 × 140 — almost 3× the pixel count. iPad portrait gets even more.',
+    ],
+  },
+  {
+    version: '0.49.10',
+    date: '2026-05-30',
+    items: [
+      'Fix (iPad / iPhone) — the Reframe & crop sheet was capped at the standard 560 × 70vh sheet box, which on iPad meant ~30% of the screen width and a vertical cut-off that hid the Background fill / Fill colour rows + the Apply button below the fold (and the inner content didn\'t scroll). The sheet now grows up to `min(880px, 92vw)` wide and `min(92vh, 920px)` tall on tablet+, and the inner content scrolls — Apply button stays reachable no matter how tall the content runs. Phone (< 640px) still uses the full-width bottom-anchored layout from before; this only changes tablet+ behaviour.',
+      'Sheet sizing is scoped to the Reframe sheet, not applied globally. The other sheets (category picker, company switcher, sort, prompt picker, etc.) are short lists where 560px reads fine on iPad — making them all wider would just leave dead space. The Reframe sheet is the one that actually benefits because it carries a preview image + four control rows.',
+      'Fix (desktop) — Settings sidebar icon was a sun (centre circle + 8 rays). Long-standing visual bug; it read as "weather / brightness" rather than "settings." Swapped for a proper Feather-style cogwheel — the universal settings symbol every desktop OS uses. No change to the menu position or shortcut (still `,` for jump-to-Settings).',
+    ],
+  },
+  {
+    version: '0.49.9',
+    date: '2026-05-30',
+    items: [
+      'NEW (iPad / iPhone) — Reframe & crop is no longer a blind run. A new sheet opens with a LIVE PREVIEW of the result + four control rows so you can see exactly what you\'re about to commit before you commit it. Replaces the bare "Main / All" picker from v0.49.8 — the picker hid behind it the fact that we were sending the desktop defaults blind, which is what you flagged.',
+      'Preview re-renders on every control change (debounced ~350ms). Each preview is one round-trip to `images:reframePreview`, which is the same IPC the desktop\'s reframe panel uses, so what you see on the iPad is exactly what the desktop would render with the same knobs. Stale-response guard: if you tap through three settings quickly, only the LAST preview paints — the earlier ones are dropped on arrival.',
+      'Controls exposed (intentionally trimmed from the full desktop set so the sheet fits a phone): • Apply to — Main image / All N images (locked to "This image" when you enter from the ⋯ menu, since the choice is already implicit). • Tightness — Snug / Normal / Loose (maps to scale 0.95 / 0.88 / 0.78). • Background fill — Solid colour / Blur edges. • Fill colour — White / Black / Light grey / Custom… (Custom opens the native iOS colour picker, full hex range). Hidden when fill is Blur, since the colour doesn\'t apply.',
+      'Defaults persist per-device. Pick "Loose + Light grey" once on your iPad and the next time you open Reframe it starts there, regardless of which product you\'re on. (Persistence is per-device, not per-account — the same staff user on iPad and iPhone can prefer different defaults.)',
+      'Preview source is labelled clearly: "Previewing #1 — same settings apply to all 5 images" when you have All selected so you know you\'re seeing a representative, not all-of-them. We can\'t practically render 5 previews at once on a phone.',
+      'The "Reframe & crop this image" row in the ⋯ menu now opens this same sheet with the scope locked to that specific image and the preview source pre-pointed at it. The destructive window.confirm() we had in v0.49.8 is removed — the sheet\'s Apply button is the explicit commit, and you\'ve already seen the preview.',
+      'Internal — runReframeCrop() now takes an opts object {scale, fillMode, fillColor, trimThreshold}. The IPC arg surface is unchanged; this is just the webclient passing through tuned values instead of hard-coded ones. The header button still says "✂︎ Reframe & crop" — same entry point, just smarter behind the curtain.',
+    ],
+  },
+  {
+    version: '0.49.8',
+    date: '2026-05-30',
+    items: [
+      'NEW (iPad / iPhone) — reorder images inside a product. Each gallery tile now has ‹ and › arrows at the bottom corners. Tap to swap with the neighbor. Disabled at the boundaries (first tile can\'t go earlier; last can\'t go later). Tapping the left arrow on tile #2 moves it to position #1 — same as "Set as main" for the case where you want to promote a single image. Server is the authoritative check on the new order (the existing `images:reorderImages` IPC already validates the permutation), so an invalid swap can\'t corrupt the gallery.',
+      'CHANGE — "Auto-crop" → "Reframe & crop." Same operation; clearer name. The big change: it no longer silently runs on every image in the product. Tapping the button now opens a scope picker: "Main image (#1)" or "All N images." You see exactly what\'s going to be touched before it touches it.',
+      'NEW — "Reframe & crop this image" in the per-tile ⋯ menu. Quickest path when you only want to fix one specific image — tap ⋯ on the bad tile, pick that row, confirm. Skips the scope picker (the context is unambiguous when you tapped a specific tile).',
+      'Foundation for v0.49.9 — the new "scope picker" sheet is reusable. v0.49.9 will add multi-select inside a product (long-press a tile → select-mode → checkmarks); the picker will then show a third "Selected (N)" row. v0.49.10 adds Enhance, v0.49.11 adds Overlay — both go through the same scope picker so the apply-to question feels consistent across all four edit actions.',
+      'Internal — `images:autoCropProducts` (the server IPC) now accepts an optional `filepaths` array. When supplied, only those filepaths are processed; when omitted, the original "every image in the product" behavior. Backwards-compatible: desktop callers don\'t pass it, so nothing on the desktop changes.',
+      'Role-gated: reorder arrows are hidden for Viewer + Photographer (writes). The ⋯ menu rules are unchanged.',
+    ],
+  },
+  {
+    version: '0.49.7',
+    date: '2026-05-30',
+    items: [
+      'NEW (iPad / iPhone) — sort the product list. New "Sort" chip in the appbar next to the Category chip. Tap → bottom sheet opens with the available sort keys: Recently edited (default), SKU, Name, Category, Image count. Top of the sheet is a direction pill that adapts its label per key — "Newest first / Oldest first" for dates, "A → Z / Z → A" for text, "High to low / Low to high" for image count. Far less ambiguous than "Asc / Desc."',
+      'Sort survives category switches by design (your explicit ask): pick "Sort by Image count, low to high" while filtering to "Floor tiles" → switch to "Wall tiles" → still sorted by image count. The mobile viewer doesn\'t reset sort the way the desktop\'s session does; once you pick it, it stays until you change it.',
+      'Per-device default persisted in localStorage. Tied to your phone / iPad, not your account — the same staff user on two devices can prefer different sort orders. Default on a fresh device matches the desktop: "Recently edited, newest first."',
+      'Chip label shows the picked key + a tiny ↑ or ↓ arrow so you can see at a glance how the list is sorted without opening the sheet. Active row in the sheet gets a checkmark like the category picker.',
+      'Tiebreaker is SKU ascending so the order doesn\'t jitter between renders when two rows have the same value (e.g. two products edited the exact same second, or two products with 5 images each). Strings use locale-aware numeric comparison so SKUs like "AV-M81 / AV-M8101 / AV-M8200" read in human order.',
+      'Skipped Brand sort for now because the mobile viewer doesn\'t load the brand catalog (would sort by raw brand IDs instead of names). Skipped Color/Finish because it\'s rarely useful on a phone — desktop still has both.',
+    ],
+  },
+  {
+    version: '0.49.6',
+    date: '2026-05-30',
+    items: [
+      'NEW (iPad / iPhone) — "Save image to device" in the per-tile ⋯ menu. Long-press-to-save still works (the iOS gesture isn\'t going anywhere), but it\'s not obvious to staff who don\'t know it exists. Tap ⋯ on any image → top row is now "⬇ Save image to device" → triggers the iOS share sheet with a real `File` so "Save Image" lands the photo straight into Photos with one tap. Filename is `{SKU}-{position}.{ext}`, e.g. `KT-205-3.jpg`.',
+      'Why two ways: long-press is the iOS-native gesture and stays for power users; the menu item is for everyone else. Web Share API isn\'t available on every browser/iOS combination (e.g. older iPads, Safari with content blockers, embedded WebViews), so when it\'s missing we fall back to a triggered `<a download>` — iOS will route that through the Files app, where the user can long-press the file → Share → Save Image. Slightly more taps, but never silently fails.',
+      'Save is a PURE READ action and is visible to every role (Viewer, Photographer, Editor, Admin). The other ⋯ rows — Set as main / Use with AI / Delete — are unchanged in their writer-only gating (Admin + Editor see them; Viewer / Photographer don\'t). Previously the entire ⋯ menu was hidden from Viewers because every row was a write action; with Save now in there, we hide the rows individually instead.',
+      'Internals: fetches the asset blob through the existing `/assets/{path}` route with Bearer auth (so it works against the server build, not just the same-origin case), names the file off the product SKU + 1-based position, prefers `navigator.share({ files: [file] })` gated by `canShare()` per spec, falls back to `<a download>` + `URL.createObjectURL` with a `revokeObjectURL` cleanup. User-cancellation (`AbortError`) is silent — only real failures toast.',
+    ],
+  },
+  {
+    version: '0.49.5',
+    date: '2026-05-30',
+    items: [
+      'NEW (iPad / iPhone) — tap an image to preview it full-screen. The product gallery tile is now a button: tap the image to open a black-backdrop lightbox where it fills the viewport. Prev/next arrows on the sides; swipe left/right with one finger to navigate; iOS pinch-zoom still works on the image; long-press triggers the system "Save Image" sheet so you can save to camera roll. Tap ✕ or the backdrop to close.',
+      'CHANGE (iPad / iPhone) — product gallery is now a horizontal carousel instead of a wrap-down grid. Swipe horizontally instead of scrolling vertically. Phone shows ~1.5 cards with the next-card edge hinting at more; iPad shows 3-4 at a time. Adding more images to a product never pushes the rest of the page down again. The ⋯ menu still works the same — swipe to the image you want, then tap ⋯.',
+      'Trade-off, honestly: you can no longer see all of a product\'s images at one glance. For products with 3-5 images, the carousel is roughly the same as the old grid. For products with 8+ images, you swipe instead of scrolling — usually a win on a phone, possibly a step back if you were used to seeing eight tiles at once on the iPad. If this turns out to feel wrong, the layout is a 4-line CSS change to revert.',
+      'FIX (iPad / iPhone) — when typing in the category search, the input is no longer hidden behind the keyboard. Listens to window.visualViewport and pins any open sheet to the top of the visible viewport with a max-height matched to it. Works for the category picker, prompt picker, model picker, and company switcher — all keyboard-aware now.',
+    ],
+  },
+  {
+    version: '0.49.4',
+    date: '2026-05-30',
+    items: [
+      'Fix — iPad Safari was serving a stale cached copy of the web viewer HTML, so different devices ended up on different layouts off the SAME server (the iPhone fetched fresh and saw the ⋯ menu + ✨ AI flow; the iPad saw the pre-v0.47.0 layout with Auto-crop in the detail header). Root cause: the `/m` route sent `Cache-Control: no-cache`, which is famously NOT "don\'t cache" — it means "you may cache, but must revalidate." iOS Safari (especially the iPad) was loose about revalidating.',
+      'Now sends `Cache-Control: no-store, max-age=0, must-revalidate` + `Pragma: no-cache` + `Expires: 0` — the universally-respected "do not cache" recipe. Pull-to-refresh on the iPad will pick up the current version immediately and won\'t fall behind again.',
+      'Also added an `X-App-Version` response header so future "is this device stale?" questions can be answered in 5 seconds (`curl -I http://server/m | grep Version` shows the running build).',
+    ],
+  },
+  {
+    version: '0.49.3',
+    date: '2026-05-30',
+    items: [
+      'Fix (iPad / iPhone) — missing aspect ratio picker in the AI flow. The "Process with AI" sheet now has a "3. Aspect" chip row (1:1 / 4:3 / 16:9 / etc.) right after the Model row. The list is per-model and rebuilds when you change models, because each model accepts a different set (GPT-Image-2 has `auto, 1:1, 9:16, 16:9, 4:3, 3:4`; Nano Banana Edit has `1:1, 2:3, 3:2, 3:4, 4:3, 9:16, 16:9`).',
+      'Picked aspect persists in localStorage like prompt + model do. If the saved aspect isn\'t in the new model\'s list (e.g. switching from a model that supports `auto` to one that doesn\'t), the chip resets cleanly to the model\'s first option.',
+      'Until now, runs from mobile dropped through with no `size` set — provider would fall back to its own default, which wasn\'t always 1:1 and made output dimensions inconsistent across models. Fixed.',
+    ],
+  },
+  {
+    version: '0.49.2',
+    date: '2026-05-30',
+    items: [
+      'iPad / iPhone web viewer — global AI activity view. A new ✨ icon in the top bar (next to Refresh) opens a sheet listing every AI task that\'s queued, running, or failed across the active company. Each row shows the source image thumb, the product SKU, the prompt + status pill. Tap a row → jumps to that product\'s detail sheet so you can keep monitoring or interact.',
+      'The icon carries a small count badge whenever there\'s outstanding work, so the queue-up-and-keep-shooting flow (queue product A → walk to product B → keep adding) makes it obvious at a glance how much is still in flight.',
+      'Failed tasks include the same inline "Repair (no extra credit)" button as the per-product section. List polls every 6s while open so status pills flip live without pulling-to-refresh; closes cleanly when you tap a row or the backdrop.',
+      'Badge stays accurate without a background poll loop: refreshes on boot, after queueing or repairing a task, after a manual Refresh tap, and on activity-sheet close.',
+      'Role-gated: Viewer and Photographer don\'t see the ✨ button at all (no write access to queue or repair anyway).',
+    ],
+  },
+  {
+    version: '0.49.1',
+    date: '2026-05-30',
+    items: [
+      'iPad / iPhone web viewer — Repair button for failed AI tasks. When the provider accepted a job but didn\'t return an image (rare but happens — flaky network on their side, briefly-degraded model endpoint, etc.) the task lands in `failed` state. The AI section now shows it with a "⚠ Provider didn\'t return an image" row and a "Repair (no extra credit)" button. Tap it → the queue runner re-fetches the existing provider job ID instead of submitting a fresh one. Same flow as the desktop\'s Repair button. No new credit spent.',
+      'iPad / iPhone web viewer — manual Refresh button. New circular arrow icon on the top bar next to Disconnect. The web viewer doesn\'t subscribe to the live event bus the desktop uses, so a remote edit (someone added a photo from the desktop, a bulk AI run finished elsewhere) doesn\'t push down. Tap Refresh → drops all caches, reloads the product list, plus the open product\'s gallery + AI status. Icon spins while reloading.',
+      'Versioning convention change — from this release on, the cadence is PATCH bumps (`0.49.x → 0.49.(x+1)`) by default. Minor bumps are now opt-in only. The 15-release minor-climb from v0.34 → v0.49 was empty signal for someone reading the changelog; patches are the honest framing for "next iteration." (Saved in CLAUDE.md §23 so this stays the rule.)',
+    ],
+  },
+  {
+    version: '0.49.0',
+    date: '2026-05-30',
+    items: [
+      'iPad / iPhone web viewer — AI tweaks. The 1/2/3/4 variants selector is gone. Mobile always generates ONE variant per tap — predictable per-run cost, fat-finger protection on a small screen. Want a second alternative? Tap Run again.',
+      'iPad / iPhone web viewer — AI flow now remembers your last-used prompt and model and pre-fills them on the next run. Tap ⋯ → ✨ Use with AI → if you picked "Hand-taken → studio" + "Nano Banana Edit" last time, both are already selected and the Run button is enabled the moment the sheet opens. Per-device defaults stored in browser localStorage; change one by tapping its Change row again.',
+      'Edge case handled: if you saved a prompt + later deleted it from desktop, the body still works (raw text wins over the template id). If you saved a model + the catalog retires it, the model row resets cleanly to "Pick a model…".',
+    ],
+  },
+  {
+    version: '0.48.0',
+    date: '2026-05-30',
+    items: [
+      'Fix (iPad / iPhone) — AI variants now auto-add to the product as new images instead of sitting in a separate gallery waiting for a manual Promote. Tap Run AI on mobile → the variant lands in the regular gallery as soon as the model finishes. Use the ⋯ menu on any new tile to Set as main or Delete. No more manual promote step on mobile.',
+      'Fix (iPad / iPhone) — "Promote failed: gallery ID required" is gone. The old call used the wrong argument names; that whole code path is removed since variants now auto-add.',
+      'Fix (queue runner) — pure auto-add (`autoAddToProduct` without `autoPromoteAsMain`) was silently restricted to only the first variant of multi-variant runs. The `i === 1` gate now applies only to promote-as-main; plain auto-add saves EVERY variant as an image on the product, so multi-variant runs from mobile or the desktop bulk flow actually keep all the alternates.',
+      'Mobile UX consequence: the "AI generated" section in the product detail is now a status-only banner — pulses while a task is queued/running, hides itself once it\'s done (and refreshes the regular gallery so the new variants show up immediately).',
+    ],
+  },
+  {
+    version: '0.47.0',
+    date: '2026-05-30',
+    items: [
+      'NEW (iPad / iPhone web viewer) — full AI flow on mobile. Open a product, tap the ⋯ menu on any image, choose "Use with AI" → a "Process with AI" sheet opens with: the source image at the top, a Prompt picker (with search + your saved presets + the 20-prompt library — tap a library prompt to use it AND auto-save it to your presets), a Model picker (image-to-image models with per-output price), and a 1/2/3/4 variants selector with live cost estimate. Tap Run, get a "Queued — check back in 30–60s" toast.',
+      'AI results appear in a new "AI generated" section above the regular gallery the moment they\'re done — the section polls automatically every ~6s while anything is in flight, then stops. Each variant has Promote (★ Set as main) and Remove buttons.',
+      'The per-image × button is now a ⋯ menu — same convention as iOS share sheets. The menu lists "Set as main image" (when not already main), "Use with AI", and "Delete" so per-image actions scale without crowding the tile corner with separate buttons.',
+      'Set-as-main from mobile is wired through too: tap the ⋯ on any non-main image → Set as main → the regular gallery refreshes and the new main shows at position #1.',
+      'Role gating respects v0.45.0: Viewer and Photographer see no ⋯ menu at all (all actions there are writes); Promote / Remove are hidden in the AI section for those roles too. Server enforces 403; UI just keeps the buttons out of sight.',
+      'No new IPC channels — wires through ai:listPrompts, ai:listModels, ai:createPrompt, ai:queueTask, ai:listTasks, ai:listGallery, ai:promoteGalleryToProduct, ai:removeGallery, and images:setMainImage, all already proxied since v0.45.0.',
+    ],
+  },
+  {
+    version: '0.46.0',
+    date: '2026-05-30',
+    items: [
+      'iPad / iPhone web viewer — top bar redesigned for mobile. Each control now does its job in as little space as possible:',
+      '• Company is a small round chip showing its initials (e.g. "KT" for KT Ceramic). Tap to open a switcher sheet listing all companies — same level as Disconnect since you\'re leaving this company\'s catalog.',
+      '• Disconnect is an icon button next to the company chip on the same row.',
+      '• Category filter is two chips on its own row: an "All" chip (default, clears the filter) and a category-picker chip that opens a sheet. The sheet now has a search box at the top — type to live-filter the categories list, which matters when your catalog has many.',
+      '• Search SKU / name is now full-width edge-to-edge, taking the whole row instead of competing with everything else.',
+      '• Product count moved below the search, in small muted text. Read-only.',
+      'Net effect: less wasted real estate on a phone, no more squashed controls, no more horizontal scrolling, and the category picker is finally searchable.',
+    ],
+  },
+  {
+    version: '0.45.0',
+    date: '2026-05-30',
+    items: [
+      'NEW — Real role-based permissions. Two new roles: VIEWER (read-only — view, search, save images to phone, nothing else) and PHOTOGRAPHER (view + add photos only — can shoot a product on the iPad without being able to accidentally delete or edit anything). Pick the role when creating or editing a user in Settings → Multi-Mac.',
+      'Be aware: until this release "admin" and "editor" were just labels — no IPC channel checked them. Every authenticated client had the same access. v0.45.0 adds a server-side ACL that runs on every /api/rpc call — restricted roles now actually CAN\'T do writes, even if they bypass the UI (e.g. via curl). Server returns 403 with a clear message.',
+      'UI hides the controls a role can\'t use, so the buttons don\'t even appear:',
+      '• iPad / iPhone web viewer: Viewer doesn\'t see "+ Add photo", Auto-crop, or the × delete on gallery tiles. Photographer doesn\'t see Auto-crop or × delete (can still add).',
+      '• Desktop client mode: Viewer / Photographer don\'t see Image Workspace, AI Studio, Overlay Studio, Export Center, or History in the sidebar (write-only modules). Library bulk toolbar + per-image set-main / reframe / nav buttons hide too.',
+      'Standalone and server-host modes are unchanged — the renderer on the Mac running the server is the owner and isn\'t role-gated. Only REMOTE clients (other Macs + iPads) go through the ACL.',
+      'New 8 unit tests lock the permission matrix: admin / editor / photographer / viewer each verified against representative channels, fail-safe denies for unknown roles + unknown channels.',
+    ],
+  },
+  {
+    version: '0.44.0',
+    date: '2026-05-30',
+    items: [
+      'iPad / iPhone web viewer — category filter. A new "All categories" dropdown sits next to the company switcher; pick a category and the grid filters down. The dropdown re-loads automatically when you change company.',
+      'iPad / iPhone web viewer — product detail now shows Category and Price (retail). They sit alongside the existing Name / Color / Barcode / Status / Images fields and only appear when set.',
+      'iPad / iPhone web viewer — delete individual images. Each gallery tile has a circular × in its top-right corner. Tap it, confirm, and the image is removed on the server. Gallery refreshes, image count decrements, and other tiles update their blob cache so nothing shows stale pixels. (Server is the authoritative copy, same as the desktop\'s delete flow.)',
+    ],
+  },
+  {
+    version: '0.43.0',
+    date: '2026-05-30',
+    items: [
+      'NEW — Spin export. Open a product, hit "360° Spin" → "Export" to download the spin as a video file (MP4 where supported, WebM as fallback). Two loops at 12fps, downscaled to keep file size sensible. Picks the filename from the SKU automatically. No new dependencies — uses the browser\'s built-in MediaRecorder. The original GIF idea was scrapped in favour of MP4 because H.264 is ~5–10× smaller at the same quality and plays inline on Shopify, WhatsApp, iOS Photos, and Mail.',
+      'IMPROVED — Bulk background removal is now parallel. A new "Parallel workers" picker in the Remove-bg modal lets you run 1–4 products at once (default 2). The fetch / canvas matte / upload steps overlap, so even when the ML inference itself serialises you get meaningful wall-clock gains — most noticeable in client mode where each product\'s bytes round-trip to the server. Stop and per-product error handling work the same as before.',
+      'IMPROVED — Prompt library modal is now ~92% of the window wide and grows/shrinks with the viewport, so the prompt body text wraps naturally instead of forcing a horizontal scrollbar inside the modal. Long unbroken strings (e.g. URLs) wrap too.',
+      'IMPROVED — Compact "Export CSV…" control in the Library toolbar. Labels were shortened (Catalog / Shopify / Google) and the closed widget is now max 110px so it doesn\'t dominate the row. Hover the control to see the full names.',
+      'IMPROVED (iPad / iPhone web viewer) — Product detail header now flows nicely on phones. The action buttons (360°, Auto-crop, Add photo) drop together onto a second row, the SKU truncates with an ellipsis instead of stacking onto two lines, and button labels no longer break mid-word. Notch-safe padding too.',
+    ],
+  },
+  {
+    version: '0.42.1',
+    date: '2026-05-30',
+    items: [
+      'Fix (found in an audit of the recent feature batch): on the iPad/iPhone web viewer, closing the 360° spin overlay restored page scrolling even though the product detail sheet behind it was still open. The scroll lock is now kept until you actually leave the detail sheet.',
+      'Audit also confirmed clean: all new IPC channels (auto-crop, auto-enhance, completeness, catalog CSV) are covered for client mode; the new image utilities are packaging-path safe; and the in-place batch writers don\'t reintroduce the prior data-loss risk.',
+    ],
+  },
+  {
+    version: '0.42.0',
+    date: '2026-05-30',
+    items: [
+      'NEW — 360° spin viewer. Open a product\'s image preview (lightbox) and click "360° Spin": drag left/right over the photo to rotate through its angle shots, or hit Play to auto-rotate. Perfect for showing a vase or bowl from every side. Needs 2+ images on the product — shoot it from several angles and they become the spin frames (in image order; reorder them on the product to fix the sequence).',
+      'Works on the iPad/iPhone web viewer too: open a product → "↻ 360°" → drag with your finger to spin. Great for handing someone an iPad to review products in the round.',
+      'Uses the product\'s existing images as frames (no extra storage); all frames are preloaded so the spin is smooth. Note: this is an interactive viewer, not an exported animated GIF/MP4 file yet — that\'s a possible follow-up.',
+    ],
+  },
+  {
+    version: '0.41.0',
+    date: '2026-05-30',
+    items: [
+      'NEW — HEIC/HEIF (iPhone photo) import. Photos straight off an iPhone/iPad are usually HEIC, which the app previously couldn\'t decode (background removal and processing failed on them). Now any HEIC/HEIF is automatically transcoded to JPEG the moment it\'s imported — via the camera/library "Add photo" on the iPad viewer, drag/clipboard, the file picker (which now lists HEIC), and folder auto-match (a folder dragged off a phone now matches too).',
+      'Detection is by file extension AND by content (magic bytes), so a HEIC mislabeled as .jpg is still caught. Conversion uses macOS\'s built-in tool — no extra dependency, and it happens on the server where the files live, so it works the same in client mode and from the iPad.',
+    ],
+  },
+  {
+    version: '0.40.0',
+    date: '2026-05-29',
+    items: [
+      'NEW — Bulk auto-enhance. Select products → "Enhance (N)" to clean up hand-taken phone shots: it corrects colour casts (white balance), lifts dull exposure (auto-levels), and adds a gentle saturation/brightness nudge. Free and fully local (sharp, no AI, works offline).',
+      'Live before/after preview of the first product\'s main image, updating as you drag the Saturation / Brightness sliders and toggle White balance / Auto-levels. "Skip preview" is a per-run toggle (always starts off). Apply to the main image only (default) or all images.',
+      'Overwrites images in place (no per-image undo) — the preview is the safety net. Great as the first step on a batch of phone photos before Auto-crop; for tougher colored/busy backgrounds, Remove bg or an AI Studio prompt still wins.',
+    ],
+  },
+  {
+    version: '0.39.0',
+    date: '2026-05-29',
+    items: [
+      'NEW — Prompt library. AI Studio (and the bulk "AI Studio →" run) now has a "Browse library" button opening 20 ready-made image-processing prompts grouped by purpose: Studio conversion (hand-taken → studio, catalog white bg, e-commerce hero), Lighting, Backgrounds (marble, wood, gradient, lifestyle), Cleanup & retouch (remove glare / dust / tags / background), Colour (true-to-life correct, vivid), Product spec (spec view, outline), Angles (three-quarter, flat lay), and Marketing.',
+      'Each library prompt has two actions: "Use" drops it straight into the prompt box, or "Save" adds it to your own Templates — where it behaves like any custom preset (favourite it to surface it at the top, rename, edit, delete). Your own prompts and favourites work exactly as before; this just gives you a strong starting set instead of a blank box.',
+      'Library prompts use the same {name} / {color} / {category} tokens that fill from the selected product, and there\'s a search box to find one fast.',
+      'These pair with the bulk passes: e.g. use the "Hand-taken → studio" or "Catalog white background" prompt to clean up phone shots, then Auto-crop for a uniform frame.',
+    ],
+  },
+  {
+    version: '0.38.1',
+    date: '2026-05-29',
+    items: [
+      'Tweak — Auto-crop\'s "Skip preview" is now a pure per-run toggle: it always starts unchecked (preview shown) each time you open the modal, and is no longer remembered between runs.',
+    ],
+  },
+  {
+    version: '0.38.0',
+    date: '2026-05-29',
+    items: [
+      'NEW — Bulk background removal. Select products in the Library → "Remove bg (N)". For each product it removes the background from the MAIN image, drops the product onto a clean background (white by default; pick any colour), and makes that the new main — keeping the original shot at position 2 so nothing is lost. This is the free, local path for colored / hand-taken photos: run "Remove bg" first, then "Auto-crop". Uses the same engine as the Workspace (local @imgly, offline after a one-time ~80MB model download, or remove.bg cloud if you set a key). Runs one product at a time with progress and a Stop button.',
+      'NEW — Auto-crop now shows a live before/after preview of the first selected product\'s main image, updating as you drag the sliders — so you can see exactly what the batch will do before committing. Once you trust it, tick "Skip preview next time" and it\'s remembered.',
+      'NEW — Auto-crop from the iPad/iPhone web viewer. Open a product and tap "✂︎ Auto-crop" to trim + reframe its images right from a phone or tablet — handy for lending an iPad to someone to run and check results. (Background removal stays desktop-only — it needs the on-device ML engine.)',
+      'Workflow tip: white-background shots → Auto-crop directly. Colored or hand-taken shots → Remove bg (or AI Studio with your white-bg prompt) first, THEN Auto-crop, since the crop relies on a uniform background.',
+    ],
+  },
+  {
+    version: '0.37.0',
+    date: '2026-05-29',
+    items: [
+      'NEW — Auto-crop to product. Select products in the Library and click "Auto-crop (N)": it trims the background border down to the product, then re-frames every image to the same fill and margin — so a mixed batch of tight, loose, and AI shots all end up with a uniform catalog look in one pass.',
+      'Controls: a "Product fill" slider (how much of the frame the product takes), a "Background tolerance" slider (raise it for off-white / noisy backgrounds, lower it if a product edge gets clipped), and a margin fill (solid colour with a picker, or a blurred copy of the shot).',
+      'Works best on solid / white backgrounds. Busy or full-bleed shots have nothing uniform to trim, so they are just re-centered (never wrecked). The edit overwrites images in place with no per-image undo — review a few before running a big batch.',
+      'This was the fourth and final feature from the competitive review (after AVIF export, the Completeness view, and Marketplace CSV feeds).',
+    ],
+  },
+  {
+    version: '0.36.0',
+    date: '2026-05-29',
+    items: [
+      'NEW — Export catalog as CSV / marketplace feed. The Product Library toolbar has an "Export CSV…" menu with three layouts: a comprehensive Generic sheet (every field), a Shopify products import sheet, and a Google Shopping feed. It downloads instantly (works on desktop and the iPad web viewer) with a UTF-8 marker so Excel/Sheets open Khmer text correctly.',
+      'The image column carries each product\'s main-image FILENAME (not a URL) — your images live locally, so a marketplace import either matches by filename or you fill in URLs after hosting. This is the connector-free version of e-commerce integration: no fragile live API links to maintain.',
+      'Third of four features from the competitive review. Auto-crop-to-product is the last one, coming next.',
+    ],
+  },
+  {
+    version: '0.35.0',
+    date: '2026-05-29',
+    items: [
+      'NEW — AVIF export format. Export profiles now offer AVIF alongside JPG/PNG/WebP. AVIF is roughly half the size of a JPEG at similar quality (and keeps transparency), so it\'s the new sweet spot for fast-loading web/mobile catalog images. Pick it in a profile\'s Format dropdown; quality defaults sensibly lower since AVIF\'s scale runs tighter.',
+      'NEW — Catalog completeness ("Needs attention") on the Dashboard. A panel shows, for the active company, how many products are missing an image / barcode / price, and how many haven\'t been exported yet — so you can see catalog gaps at a glance. The "no images" count is clickable and jumps straight to the Library filtered to those products. When everything\'s complete you get a green all-clear.',
+      'First two of four features picked from the competitive review — marketplace CSV feeds and auto-crop-to-product are coming next.',
+    ],
+  },
+  {
+    version: '0.34.2',
+    date: '2026-05-29',
+    items: [
+      'Fix (data-safety, found in an audit): the duplicate-image merge moved files to quarantine INSIDE the same database transaction that deleted the rows. If anything failed partway through a batch, the database rolled back (the rows came back) but the files were already moved aside and the undo record was never saved — leaving products pointing at missing images with no way to undo. Restructured so the merge now commits all database changes first (including the revert record), then moves the files; if a move fails or the app crashes mid-move, the file simply stays put and Undo recovers it. Net: merging duplicates can no longer lose images on an error.',
+      'No behaviour change for a successful merge — same result, same Undo. This only hardens the failure path.',
+      'Audit also confirmed clean: no client-mode handler gaps (all 144 channels covered), no packaging-path issues, and all recent database migrations are additive + safe.',
+    ],
+  },
+  {
+    version: '0.34.1',
+    date: '2026-05-29',
+    items: [
+      'Mobile web viewer: the "Disconnect" button now asks for confirmation first (so you can\'t accidentally clear your saved token with a stray tap). For reference, the viewer stays signed in indefinitely — the server address + token are saved on the device, with no session timeout; you only re-enter the token if you Disconnect, the admin regenerates it, or iOS clears the storage (adding the page to your Home Screen prevents that).',
+    ],
+  },
+  {
+    version: '0.34.0',
+    date: '2026-05-29',
+    items: [
+      'NEW — Mobile web viewer, built into the server. When this Mac is in Server mode it now also serves a lightweight phone/iPad page at /m on the SAME address + port your Mac clients already use (e.g. http://<server>:13180/m). No separate process, no extra port. Open it in Safari on an iPad/iPhone (over Tailscale or LAN), paste a user token, and you can browse + search the library and ADD PRODUCT PHOTOS straight from the camera or photo library — they upload right into the product. Designed for "capture on the phone, do the heavy work on the computer."',
+      'Settings → Multi-Mac (Server mode) has a new "Mobile web viewer" toggle (default ON) — flip it off to disable the page; your Mac clients\' API keeps working either way. When it\'s on, the panel lists the ready-to-open /m addresses (tap to copy). The page pre-fills its own server address, so on the device you usually only paste the token.',
+      'Add photos from mobile: tap a product → "＋ Add photo" → iOS shows Take Photo / Photo Library (multi-select supported). Respects the 50-images-per-product cap and skips duplicates. HEIC photos are handled (iOS hands the page a JPEG).',
+      'Technical: the viewer is bundled into the app at build time (no runtime file reads — packaging-safe per the project rules), served from a compiled string. It reuses the existing RPC + asset endpoints, so it works in every server deployment with no extra setup.',
+    ],
+  },
+  {
+    version: '0.33.0',
+    date: '2026-05-29',
+    items: [
+      'CSV import now commits in batches. Instead of one giant write of every row at once (a huge single request + one long server transaction that could stall a client mid-import), the apply step now processes ~250 rows at a time in a loop until done. The button shows live progress ("Applying 500/1781…"), each batch is small + fast, and a hiccup on one batch no longer freezes the whole import. Pairs with the v0.32.0 RPC timeout + faster product query.',
+      'History — where it lives, and how to clear it. Your operation history is the audit log, stored in the app\'s SQLite database in your data folder (the same folder Settings shows). It was append-only with NO expiry — it just grew forever. Now the History page has a "Clear history…" menu: delete entries older than 15 / 30 / 90 days, or clear everything. It runs on the server, so it tidies the shared log (and trims the database) for every connected Mac. A confirm guards it; it can\'t be undone.',
+      '(Note: the audit log is compact — only the fields that actually changed are stored per edit, ~150 bytes each — so it\'s rarely a space problem, but the clear control is there when you want a fresh slate or to keep the DB lean.)',
+    ],
+  },
+  {
+    version: '0.32.0',
+    date: '2026-05-29',
+    items: [
+      'Fix (performance) — the product list query was the bottleneck behind slow client sync + slow CSV import. It ran THREE correlated sub-queries on every product row (image count, processed count, main-image path) — for ~1,800 products that\'s ~5,400 nested scans of the image table, every single time the list loads (first sync, after an import, after any edit). Rewrote it as grouped JOINs that scan the image table once — same results, dramatically less work. NOTE: this query runs on the SERVER, so the speed-up lands once the SERVER Mac is updated to this build.',
+      'Fix (client) — RPC calls now have a 120s timeout. Before, a single stalled call (a slow Tailscale hop, the server busy mid-import, a response that starts then hangs) would block forever with no error — which is exactly the "first sync stuck at 29.7 KB" and "CSV import never finishes" you saw. Now a genuine stall fails cleanly: the connection chip turns red and the UI recovers instead of spinning silently. (Every other network call already had a timeout; this one was the gap.)',
+      'Fix (layout) — the Library action buttons (Auto-match / Merge duplicates / Download sample / Import / + New product) no longer overflow off the right edge. The actions cluster refused to shrink, so it ran past the page instead of wrapping; now it drops to a second line on narrow windows as intended.',
+      'Reminder: for the import/sync speed-up to take effect, the SERVER Mac needs this build — the heavy query runs there. The client-side timeout + layout fixes apply as soon as the client updates.',
+    ],
+  },
+  {
     version: '0.31.0',
     date: '2026-05-29',
     items: [
@@ -1977,7 +2606,11 @@ const CHANGELOG = [
 
 export function WhatsNewModal({ open, onClose }) {
   return (
-    <Modal open={open} onClose={onClose} title="What's new">
+    // v0.49.21: size="xxl" fills ~92% of the viewport. The default narrow
+    // modal wasted a lot of horizontal real estate on big screens and made
+    // long changelog bullets wrap awkwardly — bigger is better here since
+    // the content IS long-form text.
+    <Modal open={open} onClose={onClose} title="What's new" size="xxl">
       {CHANGELOG.map((entry) => (
         <div key={entry.version} className="whats-new-entry">
           <div className="whats-new-entry__head">

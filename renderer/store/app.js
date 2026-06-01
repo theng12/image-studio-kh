@@ -44,10 +44,13 @@ export function createAppSlice(set, _get) {
     // paths (Workspace processing, etc.). Kept in the store so components can
     // react to changes without each one hitting the settings IPC. Updated by
     // bootstrap and by `refreshAppConfig()` after Settings writes.
-    appConfig: {
-      bgRemovalEngine: 'local',  // 'local' | 'removebg'
-      removeBgApiKey: null,
-    },
+    // v0.49.33: dropped `bgRemovalEngine` + `removeBgApiKey` — the paid
+    // remove.bg engine was removed in this release. The local @imgly
+    // engine is the only path now, and it doesn't need a knob in store
+    // state (the renderer just calls `removeBackground(filepath)`).
+    // The appConfig object stays so other config mirrors can be added
+    // here later without re-introducing the field.
+    appConfig: {},
 
     /* ─── Theme ─── */
 
@@ -69,10 +72,7 @@ export function createAppSlice(set, _get) {
       if (!window.api) return;
       const cfg = await window.api.settings.getAll();
       set({
-        appConfig: {
-          bgRemovalEngine: cfg?.bgRemovalEngine ?? 'local',
-          removeBgApiKey: cfg?.removeBgApiKey ?? null,
-        },
+        appConfig: {},
         dataDirIsCloud: !!cfg?.dataDirIsCloud,
         appMode: cfg?.mode ?? 'standalone',
       });

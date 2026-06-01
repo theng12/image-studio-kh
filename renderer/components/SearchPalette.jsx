@@ -2,10 +2,12 @@
  * v0.18.2: global search palette (Cmd+K).
  *
  * Opens via the Cmd/Ctrl+K shortcut wired in App.jsx. Searches
- * across products (SKU, name, barcode, secondary code, description,
- * color/finish), brands (name), and categories (name) for the
- * active company. Live results as you type with a 150ms debounce
- * so we don't hammer the server on every keystroke.
+ * across products (SKU, name, color/finish — v0.49.37 narrowed from
+ * the original sku+name+barcode+secondary_code+description+color set;
+ * a barcode hit looks identical to a name hit in the dropdown, so
+ * users couldn't tell why a row was matching), brands (name), and
+ * categories (name) for the active company. Live results as you type
+ * with a 150ms debounce so we don't hammer the server on every keystroke.
  *
  * Keyboard model:
  *   - ↑ / ↓ — move the highlight

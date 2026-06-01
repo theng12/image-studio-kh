@@ -1,21 +1,26 @@
-// Thin wrapper around background-removal engines. The rest of the renderer
-// doesn't import the heavy WASM module directly — we lazy-load on first use
-// so the initial app boot doesn't pay for the model download.
+// Thin wrapper around the local background-removal engine. The rest of the
+// renderer doesn't import the heavy WASM module directly — we lazy-load on
+// first use so the initial app boot doesn't pay for the model download.
 //
-// Two engines are supported:
-//   - 'local'    → @imgly/background-removal (WASM, offline after first run)
-//   - 'removebg' → https://api.remove.bg paid cloud API (free 50 calls/month)
+// v0.49.33: collapsed to a single engine — `@imgly/background-removal` (WASM,
+// offline after first download). The paid remove.bg cloud path was removed
+// entirely: it added a second failure surface (HTTPS to a third-party + API
+// key + monthly quota counter) that beta testers kept tripping over, and the
+// local engine has been good enough on M-series Macs for the catalog work
+// this app is built for. If we ever need an "always-works fallback" again,
+// it would be smaller to re-introduce one provider rather than continue
+// maintaining the two-engine switch infrastructure.
 //
-// Caller picks via the `engine` argument (defaulting to 'local'). The
-// Workspace reads `bgRemovalEngine` from Settings and passes it through, so
-// the toggle in Settings is now honored. (Before v0.8.2 it was dead — the
-// renderer always ran the local engine.)
+// Why download fragility used to bite specifically in client mode: the
+// renderer's CSP `connect-src` whitelist needs to include
+// `https://staticimgly.com` for the @imgly model to fetch. Standalone mode
+// had that; client mode's override in main/index.js did NOT — see the
+// v0.49.33 fix there. Symptom on the client was a "no available backend"
+// error that looked like a model-loader bug but was a CSP block.
 
 let enginePromise = null;
-const cutoutCache = new Map(); // `${engine}::${filepath}` -> { blob, bytes }
+const cutoutCache = new Map(); // filepath -> { blob, bytes }
 const inFlight = new Map();    // same key -> Promise
-
-function cacheKey(engine, filepath) { return `${engine}::${filepath}`; }
 
 function loadLocalEngine() {
   if (!enginePromise) {
@@ -106,9 +111,9 @@ export async function prefetchLocalModel(onProgress) {
         : undefined,
     });
   } catch (err) {
-    // Reuse the same friendly translator the workspace uses so users
-    // get the actionable "switch to remove.bg" / "check internet" hints
-    // instead of the raw "no available backend" / "publicPath" jargon.
+    // Reuse the same friendly translator the workspace uses so users get
+    // the actionable "check internet" / "CSP" hints instead of the raw
+    // ONNX-backend jargon.
     throw new Error(friendlyLocalEngineError(err));
   }
 }
@@ -141,27 +146,35 @@ async function removeViaLocal(filepath, onProgress) {
  * Translate the @imgly / ONNX-runtime error messages into something that
  * tells the user what to actually do. The raw messages reference internals
  * (publicPath, WASM backends, blob URLs) that mean nothing to a beta tester.
+ *
+ * v0.49.33: dropped the "switch to remove.bg" fallback advice — that engine
+ * no longer exists. Network-failure messages now point at the cache panel +
+ * client-mode CSP, which is the actual root cause for the two ways this
+ * fails ((1) no internet on first run, (2) client-mode CSP blocked the
+ * download before v0.49.33's fix).
  */
 function friendlyLocalEngineError(err) {
   const msg = err?.message ?? String(err);
   if (/no available backend|Failed to fetch dynamically imported module/i.test(msg)) {
     return (
       'Background-removal engine failed to start (ONNX WASM backend couldn\'t load). ' +
-      'This is usually a Content-Security-Policy issue in the packaged build, ' +
-      'or a network block fetching the model. If the problem persists, switch to ' +
-      'remove.bg in the Workspace settings panel.'
+      'On a fresh install this almost always means the ~80 MB model couldn\'t download — ' +
+      'check your internet connection, then click "Download model now" in Settings → ' +
+      'AI Generation → Local model cache.'
     );
   }
   if (/Resource (.+) not found|publicPath is configured/i.test(msg)) {
     return (
       'Couldn\'t fetch the @imgly model assets. Check your internet connection — ' +
-      'the first run pulls ~80MB from staticimgly.com. After that it\'s cached and offline.'
+      'the first run pulls ~80 MB from staticimgly.com. After that it\'s cached and offline.'
     );
   }
   if (/Failed to fetch|NetworkError/i.test(msg)) {
     return (
-      'Couldn\'t reach the @imgly model server. Check your internet — the first run ' +
-      'needs to download ~80MB. Or switch to remove.bg in the Workspace settings panel.'
+      'Couldn\'t reach staticimgly.com to download the background-removal model. ' +
+      'First run needs internet to fetch the ~80 MB model; after that it works offline. ' +
+      'If you\'re on a client Mac and this happened after restoring from a backup, try ' +
+      'restarting the app — the CSP allow-list for the model host is set at boot.'
     );
   }
   // v0.22.12: @imgly v1.5.x rejects very small / unusual images with
@@ -181,78 +194,38 @@ function friendlyLocalEngineError(err) {
   return `Background removal failed: ${msg}`;
 }
 
-async function removeViaRemoveBg(filepath, apiKey, onProgress) {
-  if (!apiKey) {
-    throw new Error('remove.bg API key is not set — open Settings → remove.bg API key to add one.');
-  }
-  onProgress?.('upload', 0);
-  const inputBlob = await fetchImageBlob(filepath);
-  const form = new FormData();
-  form.append('image_file', inputBlob);
-  form.append('size', 'auto');
-  form.append('format', 'png');
-
-  const res = await fetch('https://api.remove.bg/v1.0/removebg', {
-    method: 'POST',
-    headers: { 'X-Api-Key': apiKey },
-    body: form,
-  });
-  if (!res.ok) {
-    // The API returns JSON errors with `{ errors: [{ title }] }` on failure.
-    let detail = `${res.status} ${res.statusText}`;
-    try {
-      const body = await res.json();
-      if (body?.errors?.[0]?.title) detail = body.errors[0].title;
-    } catch { /* not JSON */ }
-    throw new Error(`remove.bg failed: ${detail}`);
-  }
-  onProgress?.('download', 0.5);
-  const outBlob = await res.blob();
-  const bytes = await outBlob.arrayBuffer();
-  // Best-effort usage counter bump so Settings shows the call.
-  try { await window.api?.settings?.bumpRemoveBgUsage?.(); } catch { /* non-fatal */ }
-  onProgress?.('done', 1);
-  return { blob: outBlob, bytes };
-}
-
 /**
- * Run background removal on the image at `filepath` using the configured
- * engine. Returns the cutout as both a Blob (for display) and an
- * ArrayBuffer (for IPC).
+ * Run background removal on the image at `filepath` using the local engine.
+ * Returns the cutout as both a Blob (for display) and an ArrayBuffer (for IPC).
+ *
+ * v0.49.33: dropped the `opts.engine` / `opts.apiKey` parameters; there's
+ * only one engine now. Callers passed `{ engine, apiKey }` previously —
+ * leaving extra opts in place is harmless (we just ignore them).
  *
  * @param {string} filepath
  * @param {(stage: string, ratio: number) => void} [onProgress]
- * @param {object} [opts]
- * @param {'local' | 'removebg'} [opts.engine='local']
- * @param {string} [opts.apiKey] — required when engine === 'removebg'
  */
-export async function removeBackground(filepath, onProgress, opts = {}) {
-  const engine = opts.engine === 'removebg' ? 'removebg' : 'local';
-  const key = cacheKey(engine, filepath);
-  if (cutoutCache.has(key)) return cutoutCache.get(key);
-  if (inFlight.has(key)) return inFlight.get(key);
+export async function removeBackground(filepath, onProgress /* , _opts */) {
+  if (cutoutCache.has(filepath)) return cutoutCache.get(filepath);
+  if (inFlight.has(filepath)) return inFlight.get(filepath);
 
   const job = (async () => {
-    const result = engine === 'removebg'
-      ? await removeViaRemoveBg(filepath, opts.apiKey, onProgress)
-      : await removeViaLocal(filepath, onProgress);
-    cutoutCache.set(key, result);
+    const result = await removeViaLocal(filepath, onProgress);
+    cutoutCache.set(filepath, result);
     return result;
   })();
 
-  inFlight.set(key, job);
+  inFlight.set(filepath, job);
   try {
     return await job;
   } finally {
-    inFlight.delete(key);
+    inFlight.delete(filepath);
   }
 }
 
 export function clearCutoutCache(filepath) {
   if (filepath) {
-    for (const k of cutoutCache.keys()) {
-      if (k.endsWith(`::${filepath}`)) cutoutCache.delete(k);
-    }
+    cutoutCache.delete(filepath);
   } else {
     cutoutCache.clear();
   }

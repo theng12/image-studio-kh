@@ -17,7 +17,11 @@
          only lets the renderer's own JS use eval / new Function on
          its OWN scripts; the script-src origin allowlist still gates
          WHERE scripts can come from ('self' + blob: for the worker). -->
-    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' app-image: data: blob:; style-src 'self' 'unsafe-inline'; script-src 'self' 'wasm-unsafe-eval' 'unsafe-eval' blob:; worker-src 'self' blob:; connect-src 'self' ws: http://localhost:* https://staticimgly.com https://api.remove.bg app-image: data: blob:;" />
+    <!-- v0.49.33: dropped `https://api.remove.bg` from connect-src.
+         The paid bg-removal engine was removed in this release;
+         staticimgly.com is the only third-party host that needs
+         whitelisting now (for the local @imgly model download). -->
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' app-image: data: blob:; style-src 'self' 'unsafe-inline'; script-src 'self' 'wasm-unsafe-eval' 'unsafe-eval' blob:; worker-src 'self' blob:; connect-src 'self' ws: http://localhost:* https://staticimgly.com app-image: data: blob:;" />
     <title>Image Studio KH</title>
   </head>
   <body>

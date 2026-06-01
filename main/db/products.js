@@ -86,13 +86,34 @@ function list(companyId, filters = {}) {
   if (!companyId) return [];
   const { search, brandIds, categoryIds, status, processStatus } = filters;
   const params = [companyId];
+  // v0.32.0: the old form ran THREE correlated subqueries PER product row
+  // (image count, processed count, main-image path). For a company with
+  // ~1800 products that's ~5,400 nested scans of product_images on every
+  // single list() — the dominant cost behind "client first-sync / CSV
+  // import is so slow" (every sync + post-import refresh calls this). The
+  // grouped LEFT JOINs below scan product_images ONCE each instead, turning
+  // O(products × images) into O(products + images). Output columns are
+  // identical, so rowToProduct + the wire shape are unchanged.
   let sql = `
     SELECT p.*,
-      (SELECT COUNT(*) FROM product_images pi WHERE pi.product_id = p.id) AS image_count,
-      (SELECT COUNT(*) FROM product_images pi WHERE pi.product_id = p.id AND pi.is_processed = 1) AS processed_image_count,
-      (SELECT pi.filepath FROM product_images pi
-         WHERE pi.product_id = p.id ORDER BY pi.order_index ASC LIMIT 1) AS main_image_path
+      COALESCE(ic.image_count, 0) AS image_count,
+      COALESCE(ic.processed_image_count, 0) AS processed_image_count,
+      mi.filepath AS main_image_path
     FROM products p
+    LEFT JOIN (
+      SELECT product_id,
+             COUNT(*) AS image_count,
+             SUM(CASE WHEN is_processed = 1 THEN 1 ELSE 0 END) AS processed_image_count
+        FROM product_images
+       GROUP BY product_id
+    ) ic ON ic.product_id = p.id
+    LEFT JOIN (
+      SELECT product_id, filepath FROM (
+        SELECT product_id, filepath,
+               ROW_NUMBER() OVER (PARTITION BY product_id ORDER BY order_index ASC) AS rn
+          FROM product_images
+      ) WHERE rn = 1
+    ) mi ON mi.product_id = p.id
     WHERE p.company_id = ?
   `;
 

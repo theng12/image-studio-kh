@@ -91,8 +91,21 @@ async function processImage({ sku, originalFilename, foregroundBuffer, settings 
     const b = (1 - a) * 128;
     fg = fg.linear(a, b);
   }
+  // v0.49.19: Workspace "Auto-adjust" used to be a simple `fg.normalize()` —
+  // a luminance stretch and nothing else. The Library bulk Enhance modal
+  // (v0.40.0) runs the richer WB + auto-levels + saturation + brightness
+  // pipeline via util/autoEnhance.js. Now they\'re the same: a single
+  // mental model, same look across Workspace and Library bulk.
   if (settings.autoAdjust) {
-    fg = fg.normalize();
+    const { autoEnhance } = require('./util/autoEnhance');
+    const interBuf = await fg.png().toBuffer();
+    const enhanced = await autoEnhance(interBuf, {
+      whiteBalance: true,
+      autoLevels: true,
+      saturation: 1.08,
+      brightness: 1.0,
+    });
+    fg = sharp(enhanced, { failOn: 'none' });
   }
 
   // Resize to fit inside fillBound
@@ -240,6 +253,36 @@ async function processImage({ sku, originalFilename, foregroundBuffer, settings 
     canvas = sharp(composedBuffer)
       .extract({ left: cropL, top: cropT, width: cropW, height: cropH })
       .resize(canvasW, canvasH, { fit: 'fill' });
+  }
+
+  /* ── 5c. Tone + Detail (v0.49.18) ──────────────────────────── */
+
+  // Tone: exposure is a true stop scale (±100 = ±1 stop, ±50 = ±½ stop).
+  // Implemented via sharp.linear(factor, 0) — multiplicative, matches the
+  // "exposure" knob in Lightroom / Camera Raw rather than additive brightness.
+  const tone = settings.tone || {};
+  const expo = Number(tone.exposure) || 0;
+  if (expo !== 0) {
+    const factor = Math.pow(2, expo / 100);
+    canvas = canvas.linear(factor, 0);
+  }
+
+  // Detail: sharpen (unsharp mask via sharp.sharpen) and denoise (median
+  // filter). Sharpen sigma scales from a gentle 0.5 at 1/100 up to a strong
+  // 2.5 at 100/100. Denoise picks an odd window size (3/5/7) based on
+  // strength; bigger = more aggressive smoothing, more lost detail. Skip
+  // entirely at 0 — sharp ops cost real time on large canvases.
+  const detail = settings.detail || {};
+  const sh = Math.max(0, Math.min(100, Number(detail.sharpen) || 0));
+  if (sh > 0) {
+    const sigma = 0.5 + (sh / 100) * 2.0;
+    canvas = canvas.sharpen({ sigma });
+  }
+  const dn = Math.max(0, Math.min(100, Number(detail.denoise) || 0));
+  if (dn > 0) {
+    // Median window size must be odd and small (sharp\'s upper bound is 7).
+    const winSize = dn < 34 ? 3 : (dn < 67 ? 5 : 7);
+    canvas = canvas.median(winSize);
   }
 
   /* ── 6. Save ───────────────────────────────────────────────── */

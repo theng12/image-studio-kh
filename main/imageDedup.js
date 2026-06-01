@@ -161,28 +161,45 @@ async function scanDuplicates({ companyId, thresholdPct = 95, onProgress } = {})
   };
 }
 
-/** Move a file to quarantine, returning the absolute quarantined path, or
- *  null if the source is missing or still referenced by another row. */
-function quarantineFile(opId, relFromAssets, isProcessed) {
-  const abs = isProcessed ? dataAbs(relFromAssets) : assetsAbs(relFromAssets);
-  if (!relFromAssets || !fs.existsSync(abs)) return null;
-  const dir = quarantineDir(opId);
-  fs.mkdirSync(dir, { recursive: true });
+/** PLAN a quarantine move (no I/O): given a relative path, return
+ *  `{ fromAbs, toAbs }` for a unique destination in this op's trash dir,
+ *  or null if the source doesn't exist. The actual move happens later,
+ *  AFTER the DB transaction commits (see mergeGroups). */
+function planQuarantine(opId, relPath, isProcessed) {
+  if (!relPath) return null;
+  const fromAbs = isProcessed ? dataAbs(relPath) : assetsAbs(relPath);
+  if (!fs.existsSync(fromAbs)) return null;
   // Unique name so two removed rows can't collide in the trash.
-  const qName = `${crypto.randomUUID()}-${path.basename(relFromAssets)}`;
-  const qAbs = path.join(dir, qName);
-  try { fs.renameSync(abs, qAbs); } catch (_) {
-    // Cross-device fallback: copy + unlink.
-    try { fs.copyFileSync(abs, qAbs); fs.unlinkSync(abs); } catch (_2) { return null; }
+  const toAbs = path.join(quarantineDir(opId), `${crypto.randomUUID()}-${path.basename(relPath)}`);
+  return { fromAbs, toAbs };
+}
+
+/** Execute a planned move (rename, with cross-device copy+unlink fallback).
+ *  Best-effort: on failure the source is left in place (revert recovers
+ *  from the original path). */
+function executeQuarantineMove(mv) {
+  try { fs.renameSync(mv.fromAbs, mv.toAbs); }
+  catch (_) {
+    try { fs.copyFileSync(mv.fromAbs, mv.toAbs); fs.unlinkSync(mv.fromAbs); } catch (_2) {/* leave original */}
   }
-  return qAbs;
 }
 
 /**
  * Merge the chosen groups. Each decision = { productId, keepId, removeIds }.
- * Survivors are never touched; removed rows are snapshotted, their files
- * quarantined, the rows deleted, and the surviving images renumbered. The
- * whole batch is logged to image_merge_ops for revert.
+ * Survivors are never touched; removed rows are snapshotted + logged to
+ * image_merge_ops (for revert), their rows deleted, their files moved to
+ * quarantine, and the surviving images renumbered.
+ *
+ * CRITICAL ordering (fixed in v0.34.2): the DB transaction does ONLY DB
+ * work — no filesystem moves. The undo record (with each removed file's
+ * planned quarantine path) is committed FIRST; the actual file moves run
+ * AFTER the commit. This makes the operation crash-safe: if anything
+ * throws mid-batch, the transaction rolls back cleanly with no files
+ * moved; if a post-commit move fails (or we crash), the file stays at its
+ * original path and revert still recovers it (revert falls back to the
+ * original path when the quarantined copy is missing). Previously the
+ * moves ran inside the tx, so a rollback could leave files quarantined
+ * with no committed undo record → silent image loss.
  *
  * @returns {{ opId, merged, removed, groups }}
  */
@@ -190,72 +207,90 @@ function mergeGroups({ decisions = [], thresholdPct = 95, mode = 'review', compa
   const db = getDb();
   const opId = crypto.randomUUID();
   const removedSnapshots = [];
+  const fileMoves = [];          // { fromAbs, toAbs } — executed AFTER commit
   const touchedProducts = new Set();
 
+  // ── Phase 1: PLAN. Read the rows + decide quarantine targets. No DB
+  //    writes, no file moves — so bailing here leaves nothing half-done.
+  for (const dec of decisions) {
+    const { productId, removeIds = [] } = dec || {};
+    if (!productId || removeIds.length === 0) continue;
+    for (const rid of removeIds) {
+      const row = db.prepare('SELECT * FROM product_images WHERE id = ? AND product_id = ?').get(rid, productId);
+      if (!row) continue;
+      // Only quarantine the asset file if no OTHER row references it.
+      const assetShared = productImages.countByFilepath(row.filepath) > 1;
+      const assetPlan = assetShared ? null : planQuarantine(opId, row.filepath, false);
+      // Processed file is per-row (never shared) — safe to move if present.
+      const procPlan = row.processed_filepath ? planQuarantine(opId, row.processed_filepath, true) : null;
+      if (assetPlan) fileMoves.push(assetPlan);
+      if (procPlan) fileMoves.push(procPlan);
+      removedSnapshots.push({
+        row: {
+          id: row.id,
+          product_id: row.product_id,
+          filename: row.filename,
+          filepath: row.filepath,
+          original_filepath: row.original_filepath,
+          order_index: row.order_index,
+          is_processed: row.is_processed,
+          processed_filepath: row.processed_filepath,
+          workspace_settings: row.workspace_settings,
+          content_hash: row.content_hash,
+          perceptual_hash: row.perceptual_hash,
+          created_at: row.created_at,
+        },
+        quarantine: {
+          asset: assetPlan ? assetPlan.toAbs : null,
+          processed: procPlan ? procPlan.toAbs : null,
+          assetWasShared: assetShared,
+        },
+      });
+      touchedProducts.add(productId);
+    }
+  }
+
+  if (removedSnapshots.length === 0) {
+    return { opId: null, merged: 0, removed: 0, groups: 0 };
+  }
+
+  const groupCount = decisions.filter((d) => (d.removeIds || []).length > 0).length;
+
+  // ── Phase 2: DB transaction — delete rows, reindex order, write the undo
+  //    log. DB-only and atomic; the merge-op (carrying the quarantine
+  //    targets) is durable before any file is touched.
   const tx = db.transaction(() => {
-    for (const dec of decisions) {
-      const { productId, removeIds = [] } = dec || {};
-      if (!productId || removeIds.length === 0) continue;
-      for (const rid of removeIds) {
-        const row = db.prepare('SELECT * FROM product_images WHERE id = ? AND product_id = ?').get(rid, productId);
-        if (!row) continue;
-        // Only quarantine the asset file if no OTHER row references it.
-        const assetRefs = productImages.countByFilepath(row.filepath);
-        const assetQ = assetRefs <= 1 ? quarantineFile(opId, row.filepath, false) : null;
-        // Processed file is per-row (never shared) — safe to move if present.
-        const procQ = row.processed_filepath ? quarantineFile(opId, row.processed_filepath, true) : null;
-        removedSnapshots.push({
-          row: {
-            id: row.id,
-            product_id: row.product_id,
-            filename: row.filename,
-            filepath: row.filepath,
-            original_filepath: row.original_filepath,
-            order_index: row.order_index,
-            is_processed: row.is_processed,
-            processed_filepath: row.processed_filepath,
-            workspace_settings: row.workspace_settings,
-            content_hash: row.content_hash,
-            perceptual_hash: row.perceptual_hash,
-            created_at: row.created_at,
-          },
-          quarantine: { asset: assetQ, processed: procQ, assetWasShared: assetRefs > 1 },
-        });
-        db.prepare('DELETE FROM product_images WHERE id = ?').run(rid);
-        touchedProducts.add(productId);
-      }
-      // Reindex order_index contiguous for this product.
+    const del = db.prepare('DELETE FROM product_images WHERE id = ?');
+    for (const snap of removedSnapshots) del.run(snap.row.id);
+    const upd = db.prepare('UPDATE product_images SET order_index = ? WHERE id = ?');
+    for (const pid of touchedProducts) {
       const remaining = db
         .prepare('SELECT id FROM product_images WHERE product_id = ? ORDER BY order_index ASC')
-        .all(productId);
-      const upd = db.prepare('UPDATE product_images SET order_index = ? WHERE id = ?');
+        .all(pid);
       remaining.forEach((r, i) => upd.run(i, r.id));
     }
-
     db.prepare(
       `INSERT INTO image_merge_ops
         (id, created_at, company_id, threshold_pct, mode, group_count, removed_count, removed_json)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-    ).run(
-      opId, Date.now(), companyId ?? null, thresholdPct, mode,
-      decisions.filter((d) => (d.removeIds || []).length > 0).length,
-      removedSnapshots.length,
-      JSON.stringify(removedSnapshots),
-    );
+    ).run(opId, Date.now(), companyId ?? null, thresholdPct, mode, groupCount, removedSnapshots.length, JSON.stringify(removedSnapshots));
   });
   tx();
 
-  // Renumber on-disk filenames to close gaps (outside the tx — file moves).
+  // ── Phase 3: AFTER commit, move removed files to quarantine. Best-effort
+  //    — a failure here leaves the file at its original path, and revert
+  //    recovers it from there.
+  if (fileMoves.length) {
+    try { fs.mkdirSync(quarantineDir(opId), { recursive: true }); } catch (_) {}
+    for (const mv of fileMoves) executeQuarantineMove(mv);
+  }
+
+  // ── Phase 4: renumber surviving files so NNN slots stay contiguous.
   for (const pid of touchedProducts) {
     try { productImages.renumberFiles(pid); } catch (_) {/* best-effort */}
   }
 
-  return {
-    opId,
-    merged: touchedProducts.size,
-    removed: removedSnapshots.length,
-    groups: decisions.filter((d) => (d.removeIds || []).length > 0).length,
-  };
+  return { opId, merged: touchedProducts.size, removed: removedSnapshots.length, groups: groupCount };
 }
 
 function rowToOp(row) {

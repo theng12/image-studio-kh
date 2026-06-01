@@ -3,8 +3,12 @@
  *
  * Covers the persistent config flat-file at
  * `<userData>/config.json`, the data-folder picker + move flow,
- * the remove.bg API key check + monthly usage counter, plus the
- * multi-Mac mode switch + server / client controls.
+ * plus the multi-Mac mode switch + server / client controls.
+ *
+ * v0.49.33: the remove.bg API-key check (`settings:testRemoveBg`)
+ * and the monthly-usage counter (`settings:bumpRemoveBgUsage`) were
+ * removed along with the paid bg-removal engine itself. The local
+ * @imgly engine is now the only path.
  *
  * Multi-Mac glue lives here (not in a separate file) because all
  * the controls are in the Settings page. The server admin sees
@@ -247,42 +251,11 @@ function register({ expose }) {
     return { ok: true, path: targetPath };
   });
 
-  ipcMain.handle('settings:testRemoveBg', async (_e, { apiKey }) => {
-    if (!apiKey) throw new Error('API key is empty');
-    // Lightweight check: hit the /v1/account endpoint.
-    try {
-      const res = await fetch('https://api.remove.bg/v1.0/account', {
-        method: 'GET',
-        headers: { 'X-Api-Key': apiKey },
-      });
-      if (!res.ok) {
-        const body = await res.text().catch(() => '');
-        throw new Error(`remove.bg returned ${res.status}${body ? `: ${body.slice(0, 120)}` : ''}`);
-      }
-      const data = await res.json().catch(() => ({}));
-      return {
-        ok: true,
-        credits: data?.data?.attributes?.credits?.total ?? null,
-        free: data?.data?.attributes?.api?.free_calls ?? null,
-      };
-    } catch (err) {
-      throw new Error(`Connection failed: ${err.message}`);
-    }
-  });
-
-  // Increment the per-month remove.bg call counter shown in
-  // Settings. The renderer calls this each time it makes a
-  // successful bg-removal request so the user can track usage
-  // against their plan. Auto-resets to 0 when the month rolls over.
-  ipcMain.handle('settings:bumpRemoveBgUsage', () => {
-    const cfg = config.loadConfig();
-    const monthNow = new Date().toISOString().slice(0, 7); // YYYY-MM
-    const prev = cfg.removeBgUsage ?? { month: monthNow, calls: 0 };
-    const next = prev.month === monthNow
-      ? { month: monthNow, calls: (prev.calls ?? 0) + 1 }
-      : { month: monthNow, calls: 1 };
-    return config.updateConfig({ removeBgUsage: next });
-  });
+  // v0.49.33: `settings:testRemoveBg` and `settings:bumpRemoveBgUsage`
+  // were removed with the paid bg-removal engine. The renderer no
+  // longer calls them; old configs with `removeBgUsage` / `removeBgApiKey`
+  // keys are harmless leftovers that loadConfig() preserves but no one
+  // reads.
 }
 
 module.exports = { register };

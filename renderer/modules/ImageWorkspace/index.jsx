@@ -36,8 +36,9 @@ export function ImageWorkspace() {
   const processedTick = useAppStore((s) => s.workspaceProcessedTick);
   const addToast = useAppStore((s) => s.addToast);
   const setActiveModule = useAppStore((s) => s.setActiveModule);
-  const appConfig = useAppStore((s) => s.appConfig);
-  const refreshAppConfig = useAppStore((s) => s.refreshAppConfig);
+  // v0.49.33: appConfig + refreshAppConfig were used to read/refresh
+  // the bg-removal engine picker; both are gone now that there's only
+  // one engine.
   // Product list + jump action used by the in-workspace product picker so
   // the user can move between products without bouncing back to Library.
   const products = useAppStore((s) => s.products);
@@ -67,6 +68,94 @@ export function ImageWorkspace() {
   }
   function toggleCropMode() {
     setCropMode((v) => !v);
+  }
+  // v0.49.15: aspect-ratio picker.
+  // - 'free'              → no constraint
+  // - '1:1' / '4:3' / ... → standard preset
+  // - 'custom'            → opens the W:H input row (no constraint until typed)
+  // - 'custom-3:2' / etc. → user-confirmed custom ratio
+  // When the ratio changes AND a rect exists, re-shape it (keep center) so
+  // the user sees their work re-proportioned instead of disappearing.
+  function handleCropAspectChange(id) {
+    // v0.49.16: the slider piggybacks on this channel via a `__straighten:N`
+    // sentinel so we don\'t have to add yet another prop. Match it first;
+    // anything else is a real aspect-ratio change.
+    if (typeof id === 'string' && id.startsWith('__straighten:')) {
+      const v = Number(id.slice('__straighten:'.length)) || 0;
+      const clamped = Math.max(-45, Math.min(45, v));
+      setSettings((s) => ({ ...s, cropStraighten: clamped }));
+      return;
+    }
+    setSettings((s) => {
+      const next = { ...s, cropAspectRatio: id };
+      if (!s.cropRect) return next;
+      // Pull the numeric ratio out and re-shape the rect against the canvas dims.
+      const ratioStr = id === 'free' ? null
+        : id === 'custom' ? null
+        : id.startsWith('custom-') ? id.slice('custom-'.length)
+        : id;
+      const m = ratioStr ? String(ratioStr).match(/^(\d+(?:\.\d+)?)\s*[:x/]\s*(\d+(?:\.\d+)?)$/) : null;
+      const outputAspect = m ? Number(m[1]) / Number(m[2]) : null;
+      if (!outputAspect) return next; // 'free' or 'custom' (input incomplete) — leave rect alone
+      const rectAspect = outputAspect * (s.canvasHeight / s.canvasWidth);
+      const cx = s.cropRect.x + s.cropRect.width / 2;
+      const cy = s.cropRect.y + s.cropRect.height / 2;
+      let w = s.cropRect.width, h = w / rectAspect;
+      const altH = s.cropRect.height, altW = altH * rectAspect;
+      if (altW * altH > w * h) { w = altW; h = altH; }
+      if (h > 1) { h = 1; w = h * rectAspect; }
+      if (w > 1) { w = 1; h = w / rectAspect; }
+      const nx = Math.max(0, Math.min(1 - w, cx - w / 2));
+      const ny = Math.max(0, Math.min(1 - h, cy - h / 2));
+      return { ...next, cropRect: { x: nx, y: ny, width: w, height: h } };
+    });
+  }
+  function handleCancelCrop() {
+    setSettings((s) => ({ ...s, cropRect: null }));
+    setCropMode(false);
+  }
+  // v0.49.15: commit the crop via `images:cropImage`. Two destinations:
+  // - 'newImage'  → appends a cropped copy as a new product image (default)
+  // - 'overwrite' → writes back to the source file (destructive, confirms)
+  const [cropApplying, setCropApplying] = useState(false);
+  async function handleApplyCrop(destination) {
+    if (!activeImage || !activeProductId || !settings.cropRect) return;
+    if (destination === 'overwrite') {
+      const ok = window.confirm(
+        'Overwrite the source image with the cropped version?\n\nThis rewrites the original file on disk — there\'s no undo.',
+      );
+      if (!ok) return;
+    }
+    setCropApplying(true);
+    try {
+      const res = await window.api.images.cropImage({
+        productId: activeProductId,
+        filepath: activeImage.filepath,
+        rect: settings.cropRect,
+        // v0.49.16: pre-extract rotation. Server applies sharp.rotate(straighten,
+        // {background: white}) before resolving the rect against the rotated
+        // bbox. Zero = skip (one less sharp pass).
+        straighten: Number(settings.cropStraighten || 0),
+        destination,
+      });
+      // Successful commit — clear the rect + straighten, exit crop mode, refresh.
+      setSettings((s) => ({ ...s, cropRect: null, cropStraighten: 0 }));
+      setCropMode(false);
+      await refreshWorkspaceImages(activeProductId);
+      bumpProcessedTick();
+      useAppStore.getState().refreshProducts();
+      if (destination === 'overwrite') {
+        addToast(`Cropped to ${res.outW}×${res.outH}px (source overwritten)`, 'success');
+      } else if (res?.skipped) {
+        addToast('Crop produced an identical image — no duplicate added', 'info');
+      } else {
+        addToast(`Cropped to ${res.outW}×${res.outH}px (added as new image)`, 'success');
+      }
+    } catch (err) {
+      addToast(`Crop failed: ${err.message}`, 'error');
+    } finally {
+      setCropApplying(false);
+    }
   }
 
   // Load product images on activeProductId change.
@@ -143,25 +232,18 @@ export function ImageWorkspace() {
   async function processOne(image) {
     let foregroundBytes = null;
     if (settings.removeBackground) {
-      // Engine is whatever the user picked in the SettingsPanel (or the
-      // Settings page). 'local' is the bundled @imgly WASM; 'removebg' is
-      // the paid cloud API. Both share the same disk cache + IPC pipeline
-      // after this point.
-      const engine = appConfig.bgRemovalEngine === 'removebg' ? 'removebg' : 'local';
+      // v0.49.33: only one engine remains — the bundled local @imgly
+      // WASM. The remove.bg cloud path (and its upload/download progress
+      // states) were removed.
       const { bytes } = await removeBackground(
         image.filepath,
         (stage, ratio) => {
-          if (engine === 'removebg') {
-            if (stage === 'upload') setProcessingLabel('Uploading to remove.bg…');
-            else if (stage === 'download') setProcessingLabel('Downloading cutout from remove.bg…');
-            else setProcessingLabel('Removing background…');
-          } else if (stage.startsWith('fetch:')) {
+          if (stage.startsWith('fetch:')) {
             setProcessingLabel(`Downloading bg-removal model… ${Math.round(ratio * 100)}%`);
           } else {
             setProcessingLabel(`Removing background… ${Math.round(ratio * 100)}%`);
           }
         },
-        { engine, apiKey: appConfig.removeBgApiKey },
       );
       foregroundBytes = bytes;
     }
@@ -371,6 +453,12 @@ export function ImageWorkspace() {
             cropMode={cropMode}
             onToggleCropMode={toggleCropMode}
             onCropChange={handleCropChange}
+            onCropAspectChange={handleCropAspectChange}
+            onApplyCrop={handleApplyCrop}
+            onCancelCrop={handleCancelCrop}
+            cropApplying={cropApplying}
+            // v0.49.17: rotate buttons relocated from SettingsPanel.
+            onRotationChange={(deg) => setSettings((s) => ({ ...s, rotation: ((Math.round(Number(deg) / 90) * 90) % 360 + 360) % 360 }))}
           />
           <SettingsPanel
             settings={settings}
@@ -386,6 +474,11 @@ export function ImageWorkspace() {
             onUploadWatermark={handleUploadWatermark}
             fillPreview={fillPreview}
             onToggleFillPreview={setWorkspaceFillPreview}
+            // v0.49.20: bridge from Workspace watermark → Overlay templates.
+            // The Save-as-Template button in the watermark section calls back
+            // here so we can surface the success toast next to the bulk-apply
+            // hint, instead of jamming an alert() into the panel.
+            onWatermarkSavedAsTemplate={(name) => addToast(`Saved "${name}" as Overlay template — bulk-apply from Library`, 'success')}
           />
         </div>
       )}

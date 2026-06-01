@@ -1,7 +1,7 @@
 {
   "name": "image-studio-kh",
   "private": true,
-  "version": "0.31.0",
+  "version": "0.49.40",
   "description": "Image Studio KH — batch product image processor",
   "author": "TerraNash",
   "main": "dist-electron/main/index.js",
@@ -10,7 +10,8 @@
     "build": "vite build",
     "preview": "vite preview",
     "icon:build": "node scripts/build-icon.js",
-    "predist": "npm run install:sharp-cross",
+    "webclient:bundle": "node scripts/build-webclient.js",
+    "predist": "npm run webclient:bundle && npm run install:sharp-cross",
     "dist": "vite build && electron-builder",
     "release": "npm version patch --no-git-tag-version && npm run dist",
     "release:minor": "npm version minor --no-git-tag-version && npm run dist",

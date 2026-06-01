@@ -60,6 +60,14 @@ function clamp(n, min, max) {
  * @param {'blur'|'color'} [args.fillMode='color']
  * @param {string} [args.fillColor='#FFFFFF']  used when fillMode === 'color'
  * @param {number} [args.blurSigma=28]  blur strength for 'blur' fill
+ * @param {boolean} [args.autoCrop=false]  trim the solid background border to
+ *        the product's bounding box BEFORE framing. This is what gives a
+ *        folder of mixed-tightness shots a uniform catalog look: every
+ *        product ends up at the same fill % regardless of how much empty
+ *        background the source had. Works best on solid/white backgrounds.
+ * @param {number} [args.trimThreshold=12]  how close to the corner colour a
+ *        pixel must be to count as background (1..100). Higher = trims more
+ *        aggressively (tolerates JPEG noise / off-white), lower = conservative.
  * @returns {Promise<Buffer>}  PNG bytes, exactly canvasW × canvasH
  */
 async function reframeImage({
@@ -72,15 +80,36 @@ async function reframeImage({
   fillMode = 'color',
   fillColor = '#FFFFFF',
   blurSigma = 28,
+  autoCrop = false,
+  trimThreshold = 12,
 }) {
   const W = Math.max(16, Math.round(canvasW || 2000));
   const H = Math.max(16, Math.round(canvasH || 2000));
   const s = clamp(Number(scale) || 0.85, 0.05, 1);
 
+  // Auto-crop: trim the uniform border down to the product's bounding box so
+  // the fit-inside resize below frames every product identically. Sharp's
+  // .trim() uses the top-left pixel as the reference background. It throws if
+  // the whole image is one colour (nothing to trim) — fall back to the raw
+  // source in that case so we never lose an image. The rotate() bakes EXIF
+  // orientation in first so trim sees the upright pixels.
+  let src = inputImage;
+  if (autoCrop) {
+    try {
+      src = await sharp(inputImage, { failOn: 'none' })
+        .rotate()
+        .trim({ threshold: clamp(Number(trimThreshold) || 12, 1, 100) })
+        .toBuffer();
+    } catch (_) {
+      src = inputImage;
+    }
+  }
+
   // Foreground: shrink the whole image to fit inside (shorter side * scale).
-  // `.rotate()` with no args first applies EXIF orientation.
+  // `.rotate()` with no args first applies EXIF orientation (a no-op on the
+  // already-rotated trimmed buffer, harmless on a raw path/buffer).
   const bound = Math.round(Math.min(W, H) * s);
-  const fgBuf = await sharp(inputImage, { failOn: 'none' })
+  const fgBuf = await sharp(src, { failOn: 'none' })
     .rotate()
     .resize({ width: bound, height: bound, fit: 'inside', withoutEnlargement: false })
     .png()

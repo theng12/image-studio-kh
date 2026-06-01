@@ -11,6 +11,8 @@ import { BgModelCachePanel } from './BgModelCachePanel.jsx';
 import { ModeSegment, ServerModePanel, ClientModePanel, RestartBanner, MigrationPanel } from './MultiMacPanel.jsx';
 // CrashLogPanel is used INSIDE AboutCard — no need to re-import it here.
 import { AboutCard } from './AboutPanel.jsx';
+import { BackupsPanel } from './BackupsPanel.jsx';
+import { BackupReminder } from '../../components/BackupReminder.jsx';
 
 // v0.22.13: Settings is now tabbed. SETTINGS_TABS is the source of
 // truth for both the left rail (label + key) and the conditional
@@ -27,6 +29,9 @@ const SETTINGS_TABS = [
   // belongs alongside the other settings tabs.
   { key: 'categories',  label: 'Categories' },
   { key: 'ai',          label: 'AI Generation' },
+  // v0.49.31: local backup / restore. Hidden in client mode (a client
+  // has no local data folder to back up — see visibleTabs below).
+  { key: 'backups',     label: 'Backups' },
   { key: 'multi-mac',   label: 'Multi-Mac' },
   { key: 'about',       label: 'About' },
 ];
@@ -58,8 +63,8 @@ export function Settings() {
   // Captured on first config load (see useEffect below) and never
   // touched again until the next app launch.
   const [bootSnapshot, setBootSnapshot] = useState(null);
-  const [showApiKey, setShowApiKey] = useState(false);
-  const [testing, setTesting] = useState(false);
+  // v0.49.33: removed `showApiKey` + `testing` — they only existed
+  // for the remove.bg API key field, which is gone with the engine.
   const [versionInfo, setVersionInfo] = useState(null);
   const [pendingDataFolder, setPendingDataFolder] = useState(null);
   const [modelDownload, setModelDownload] = useState({ state: 'idle', label: '' });
@@ -70,7 +75,9 @@ export function Settings() {
     setTab(key);
     saveActiveTab(key);
   }
-  const refreshAppConfig = useAppStore((s) => s.refreshAppConfig);
+  // v0.49.33: refreshAppConfig is no longer subscribed here — the only
+  // call site was the bgRemovalEngine / removeBgApiKey patch handler,
+  // both of which are gone with the paid bg-removal engine.
 
   useEffect(() => {
     window.api?.settings.getAll().then((cfg) => {
@@ -104,11 +111,10 @@ export function Settings() {
   async function patch(key, value) {
     const next = await window.api.settings.setOne(key, value);
     setConfig(next);
-    // A few keys are mirrored in the Zustand store for use on hot paths
-    // (Workspace bg removal). Keep the mirror fresh whenever they change.
-    if (key === 'bgRemovalEngine' || key === 'removeBgApiKey') {
-      await refreshAppConfig();
-    }
+    // v0.49.33: the only keys we used to mirror in the Zustand store
+    // (`bgRemovalEngine`, `removeBgApiKey`) were removed with the paid
+    // bg-removal engine. If we ever start mirroring another key here,
+    // re-add the `refreshAppConfig()` call inside its branch.
   }
 
   async function handlePrefetchBgModel() {
@@ -183,22 +189,9 @@ export function Settings() {
     }
   }
 
-  async function handleTestRemoveBg() {
-    if (!config.removeBgApiKey) {
-      addToast('Enter an API key first', 'error');
-      return;
-    }
-    setTesting(true);
-    try {
-      const res = await window.api.settings.testRemoveBg(config.removeBgApiKey);
-      const credits = res.credits != null ? ` · ${res.credits} credits` : '';
-      addToast(`Connected to remove.bg${credits}`, 'success');
-    } catch (err) {
-      addToast(err.message, 'error');
-    } finally {
-      setTesting(false);
-    }
-  }
+  // v0.49.33: handleTestRemoveBg was removed with the paid bg-removal
+  // engine — the API-key field, the test button, and the monthly-usage
+  // counter that drove it are all gone.
 
   // v0.22.13: category add/remove handlers used to live here. They
   // moved to renderer/modules/Categories/index.jsx so the Settings
@@ -226,7 +219,9 @@ export function Settings() {
             stays put as a sibling of the scrollable pane so navigating
             doesn't lose your place. */}
         <nav className="settings-tabs" aria-label="Settings sections">
-          {SETTINGS_TABS.map((t) => (
+          {SETTINGS_TABS
+            .filter((t) => t.key !== 'backups' || config.mode !== 'client')
+            .map((t) => (
             <button
               key={t.key}
               type="button"
@@ -350,26 +345,20 @@ export function Settings() {
           ) : null}
         </SettingRow>
 
-        <SettingRow
-          label="Background removal engine"
-          hint={
-            config.mode === 'client'
-              ? 'Both options run ON THIS MAC. Local uses the @imgly WASM model on your CPU (offline after first download). remove.bg calls the cloud API directly from this Mac with your own API key. The server is NOT a middleman either way — your assistant\'s Mac and your Mac each do their own bg removal, with their own keys and their own monthly counters.'
-              : 'Local runs offline via @imgly. remove.bg uses the cloud API. The Workspace also has this picker right in its side panel.'
-          }
-        >
-          <Select
-            value={config.bgRemovalEngine}
-            onChange={(e) => patch('bgRemovalEngine', e.target.value)}
-          >
-            <option value="local">Local (bundled @imgly)</option>
-            <option value="removebg">remove.bg API</option>
-          </Select>
-        </SettingRow>
+        {/* v0.49.33: the "Background removal engine" picker (local vs
+            remove.bg API) was removed along with the paid engine
+            itself. Only the bundled local @imgly engine remains, so
+            there's no choice to surface anymore — the section now
+            jumps straight to the model pre-download + cache management
+            rows below. */}
 
         <SettingRow
           label="Pre-download local model"
-          hint="The local @imgly engine downloads a ~80MB model on first use. Pre-fetch it now so you're not stuck waiting the first time you open the Workspace. Subsequent app launches reuse the cache."
+          hint={
+            config.mode === 'client'
+              ? 'Bg removal runs ON THIS MAC. The @imgly WASM model downloads ~80 MB from staticimgly.com on first use. Pre-fetch it now so you\'re not stuck waiting the first time you open the Workspace. Subsequent app launches reuse the cache. The server is NOT a middleman — each Mac downloads + caches its own copy.'
+              : 'The @imgly engine downloads a ~80 MB model on first use. Pre-fetch it now so you\'re not stuck waiting the first time you open the Workspace. Subsequent app launches reuse the cache.'
+          }
         >
           <div className="setting-control-row">
             <Button
@@ -404,44 +393,10 @@ export function Settings() {
           <BgModelCachePanel />
         </SettingRow>
 
-        <SettingRow
-          label="remove.bg API key"
-          hint="Required when the engine above is remove.bg."
-        >
-          <div className="setting-control-row">
-            <Input
-              type={showApiKey ? 'text' : 'password'}
-              value={config.removeBgApiKey ?? ''}
-              onChange={(e) => patch('removeBgApiKey', e.target.value || null)}
-              placeholder="rmbg_…"
-              autoComplete="off"
-              spellCheck={false}
-            />
-            <Button variant="ghost" onClick={() => setShowApiKey((v) => !v)}>
-              {showApiKey ? 'Hide' : 'Show'}
-            </Button>
-            <Button onClick={handleTestRemoveBg} disabled={testing || !config.removeBgApiKey}>
-              {testing ? 'Testing…' : 'Test connection'}
-            </Button>
-          </div>
-        </SettingRow>
-
-        <SettingRow
-          label="remove.bg usage this month"
-          hint="Tracks paid API calls. Resets at the start of each month."
-        >
-          <div className="usage-counter">
-            <div className="usage-counter__row">
-              <span className="usage-counter__num">{config.removeBgUsage?.calls ?? 0}</span>
-              <span className="usage-counter__label">calls in {config.removeBgUsage?.month ?? '—'}</span>
-            </div>
-            <p className="setting-row__hint" style={{ marginTop: 4 }}>
-              {config.bgRemovalEngine === 'removebg'
-                ? 'Counter increments as you process images.'
-                : 'Switch the engine to remove.bg above to start tracking.'}
-            </p>
-          </div>
-        </SettingRow>
+        {/* v0.49.33: the "remove.bg API key" + "remove.bg usage this
+            month" rows were removed when the paid engine was dropped.
+            The local @imgly model is now the only background-removal
+            path; it doesn't need an API key or a monthly counter. */}
 
         </div>
         )}
@@ -590,6 +545,10 @@ export function Settings() {
         </div>
         )}
 
+        {tab === 'backups' && config.mode !== 'client' && (
+          <BackupsPanel config={config} />
+        )}
+
         {tab === 'about' && (
         <div className="settings-page">
         <AboutCard versionInfo={versionInfo} />
@@ -676,6 +635,9 @@ function ChangeDataFolderModal({ open, fromPath, toPath, onCancel, onConfirm }) 
           When unchecked, the app just points at the new folder; the existing data
           stays where it is and will look empty until you put files there.
         </p>
+        {/* v0.49.31: a data-folder change moves/relocates everything —
+            surface the last backup + a one-click backup before switching. */}
+        <BackupReminder />
       </div>
     </Modal>
   );

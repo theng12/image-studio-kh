@@ -232,3 +232,15 @@ The single nastiest bug class in this app: code that resolves paths relative to 
 When something new becomes a durable preference, **edit this file** in-place. Don't create a separate decisions doc; this is the single source of truth.
 
 If a rule here is wrong or out of date, propose the correction in chat — don't silently violate it.
+
+## 23. Version bumps — patch only, by default
+
+When the release cadence rule in MEMORY says "bump the version after every fix or feature," that means **patch bump** — the third number. `0.49.0 → 0.49.1 → 0.49.2 → …`. Don't reach for the middle (minor) number just because the change feels big.
+
+- **Default:** increment the PATCH (`0.x.y → 0.x.(y+1)`). Use this for every fix, polish, and ordinary feature, even substantial ones like the AI mobile flow or role-based permissions.
+- **Minor bump (`0.x.0 → 0.(x+1).0`):** only when I explicitly ask for it, or for a coordinated batch of releases shipped as a single milestone. Default = don't.
+- **Major bump:** never without an explicit ask.
+
+Reasoning: a "v0.49.0 just shipped, v0.50.0 already" cadence is misleading for a beta-tester reading WhatsNew — it implies milestones that aren't there. Patches are the honest framing for "this is the next iteration." The number that *should* feel meaningful is the minor; spending it freely empties it of signal.
+
+History note (so this doesn't get re-litigated): from v0.34 → v0.49 we bumped the minor on every release for ~15 consecutive versions. v0.49 is the last of that pattern; v0.49.1 starts the new convention. Don't retro-renumber.

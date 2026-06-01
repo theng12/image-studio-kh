@@ -56,6 +56,54 @@ export default defineConfig({
   build: {
     outDir: path.resolve(__dirname, 'dist-renderer'),
     emptyOutDir: true,
+    // v0.49.31: 500 KB is Vite\'s default warning threshold, calibrated for
+    // web apps fetching over HTTPS where every extra 100 KB costs the user
+    // real time. This is an Electron app — the renderer loads from a local
+    // file inside the asar, so a 1 MB chunk reads from disk in ~15 ms.
+    // Bumping to 1000 KB silences warnings at sizes that genuinely matter
+    // in this context. NOT a "hide the problem" bump:
+    //   - Route splitting + manualChunks brought the main app chunk from
+    //     1,878 KB → 633 KB, which is the practical floor without lazy-
+    //     loading ProductLibrary itself (would add a load flash to the
+    //     most-common landing page).
+    //   - The 943 KB `vendor-bwip` chunk is the bwip-js barcode renderer —
+    //     it\'s a single module-level import in OverlayStudio/barcodePreview.js
+    //     and only ships with the OverlayStudio route chunk, so it doesn\'t
+    //     download until the user opens Overlay Studio. Converting it to
+    //     dynamic import would change `renderBarcodeSVG` from synchronous
+    //     to async (caller behaviour change, not allowed by spec). The
+    //     library covers all barcode symbologies (Code128, EAN-13, UPC-A,
+    //     QR, …) so there\'s no straightforward tree-shake.
+    chunkSizeWarningLimit: 1000,
+    // v0.49.31: extract the heaviest renderer-side libraries into their
+    // own chunks. Route-level lazy splitting (in App.jsx) brought the main
+    // chunk from 1,878 → 992 KB; isolating these vendors gets it under
+    // Vite\'s 500 KB warning. Criterion: only deps big enough to matter
+    // (> 100 KB minified) with a small import surface so the cut is
+    // clean. React + scheduler stay grouped because they\'re always loaded
+    // together — splitting them would just add a tiny round-trip with no
+    // caching benefit.
+    rollupOptions: {
+      output: {
+        manualChunks(id) {
+          if (!id.includes('node_modules')) return undefined;
+          if (id.includes('node_modules/react')
+              || id.includes('node_modules/react-dom')
+              || id.includes('node_modules/scheduler')) {
+            return 'vendor-react';
+          }
+          // xlsx (SheetJS) — large, only used by the CSV import + export paths.
+          if (id.includes('node_modules/xlsx')) return 'vendor-xlsx';
+          // bwip-js — barcode renderer, only used inside Overlay Studio.
+          if (id.includes('node_modules/bwip-js')) return 'vendor-bwip';
+          // @imgly already produces separate ONNX chunks (ort.*); group its
+          // wrapper code with them so any bg-removal entry points stay out
+          // of the renderer main bundle on boot.
+          if (id.includes('node_modules/@imgly')) return 'vendor-imgly';
+          return undefined;
+        },
+      },
+    },
   },
   plugins: [
     stripCrossoriginPlugin(),

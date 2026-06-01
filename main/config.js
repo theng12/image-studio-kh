@@ -30,12 +30,17 @@ function legacyDataDir() {
 function defaultConfig() {
   return {
     dataDir: defaultDataDir(),
+    // v0.49.31: where local backups (.iskhbackup) are written. null →
+    // <dataDir>/backups. The user can repoint this at an external drive
+    // from Settings → Backups. Machine-specific (NOT bundled / restored).
+    backupsDir: null,
     firstLaunchHandled: false,
     defaultExportFolder: null,
     defaultExportProfileId: null,
-    bgRemovalEngine: 'local',  // 'local' | 'removebg'
-    removeBgApiKey: null,
-    removeBgUsage: { month: monthKey(), calls: 0 },
+    // v0.49.33: removed `bgRemovalEngine`, `removeBgApiKey`, and
+    // `removeBgUsage` — the paid remove.bg cloud engine was dropped,
+    // leaving only the local @imgly WASM engine. Old configs that
+    // still have these keys are harmless; we just ignore them.
     defaultSeparator: '-',     // '-' | '_' | ''
     defaultTokens: ['SKU', 'INDEX'],
     theme: 'light',            // 'light' | 'dark' | 'system'
@@ -76,6 +81,10 @@ function defaultConfig() {
      * between standalone/server and client). */
     mode: 'standalone',                 // 'standalone' | 'server' | 'client'
     serverPort: 13180,                  // server mode: HTTP port to bind
+    // v0.34.0: when in server mode, also serve the lightweight mobile/iPad
+    // web viewer at GET /m (view + search + add-photo). Default on; the
+    // server checks this per-request so toggling takes effect immediately.
+    webViewerEnabled: true,
     clientServerUrl: '',                // client mode: e.g. 'http://100.64.0.5:13180'
     clientToken: '',                    // client mode: user token from server admin
     clientUserName: '',                 // client mode: cached display name

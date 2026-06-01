@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Button, Modal } from '../../components/ui.jsx';
 import { confirm } from '../../components/ConfirmModal.jsx';
+import { confirmWithBackup } from '../../components/BackupReminder.jsx';
 import { useAppStore } from '../../store/index.js';
 import { appImageSrc } from '../../lib/imageUrl.js';
 
@@ -173,7 +174,7 @@ export function DuplicateMergeModal({ open, onClose }) {
   }
 
   async function handlePurge(opId) {
-    const ok = await confirm({
+    const ok = await confirmWithBackup({
       title: 'Permanently delete quarantined images?',
       message: 'This frees the disk space, but this merge can no longer be undone afterwards.',
       confirmLabel: 'Purge',
@@ -188,7 +189,7 @@ export function DuplicateMergeModal({ open, onClose }) {
   }
 
   async function handlePurgeAll() {
-    const ok = await confirm({
+    const ok = await confirmWithBackup({
       title: 'Purge all quarantined images?',
       message: `Permanently deletes the quarantined files (${fmtBytes(quarantine.totalBytes)}).`,
       detail: 'All still-undoable merges become non-revertable. Already-reverted merges are unaffected.',

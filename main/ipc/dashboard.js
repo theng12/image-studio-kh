@@ -13,6 +13,8 @@ function register({ expose }) {
   expose('dashboard:stats',          (companyId) => dashboard.statsFor(companyId));
   expose('dashboard:recentBrands',   ({ companyId, limit } = {}) => dashboard.recentBrands(companyId, limit ?? 5));
   expose('dashboard:recentProducts', ({ companyId, limit } = {}) => dashboard.recentProducts(companyId, limit ?? 8));
+  // v0.35.0: catalog-completeness counts for the "needs attention" panel.
+  expose('dashboard:completeness',   (companyId) => dashboard.completenessFor(companyId));
 }
 
 module.exports = { register };

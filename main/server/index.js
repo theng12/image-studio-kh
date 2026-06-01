@@ -254,6 +254,50 @@ async function handleRequest(req, res, dataDir) {
     return;
   }
 
+  // v0.34.0: the mobile/iPad web viewer page. Public like a login page —
+  // the user still needs a token to talk to the API. Gated by the
+  // `webViewerEnabled` config flag (read per-request, default ON, so the
+  // Settings toggle takes effect with no restart). Served from a compiled
+  // string (require('../webclientHtml')), never a source-tree file, so it
+  // survives packaging (CLAUDE.md §21).
+  if (req.method === 'GET' && (urlPath === '/m' || urlPath === '/m/')) {
+    let enabled = true;
+    try { enabled = require('../config').loadConfig().webViewerEnabled !== false; } catch (_) {}
+    if (!enabled) {
+      res.writeHead(404, { 'Content-Type': 'text/plain' });
+      res.end('The mobile web viewer is turned off.');
+      return;
+    }
+    let html = '';
+    try { html = require('../webclientHtml'); } catch (_) { html = ''; }
+    if (!html) { res.writeHead(500); res.end('viewer unavailable'); return; }
+    // v0.49.4: `no-cache` was a footgun — it tells the browser "you MAY cache,
+    // but must revalidate," and iOS Safari (especially the iPad) interpreted
+    // that loosely enough to serve stale HTML across releases. Confirmed
+    // symptom: iPad showed the pre-v0.47.0 layout (no ⋯ menu, Auto-crop in
+    // the detail header) while the iPhone got the current build from the
+    // SAME server. `no-store` is the universally-respected "do not cache".
+    // The Pragma + Expires lines exist for older proxies that still gate on
+    // HTTP/1.0 semantics — cheap belt-and-braces.
+    // CLAUDE.md §21: version comes from `app.getVersion()`, NEVER from
+    // `require('../../package.json')` — the relative path resolves in dev but
+    // breaks in the packaged build (the compiled file moves to
+    // `dist-electron/main/server/index.js`). Same trap as the v0.26.52 bug.
+    let version = '';
+    try { version = require('electron').app.getVersion() || ''; } catch (_) {}
+    res.writeHead(200, {
+      'Content-Type': 'text/html; charset=utf-8',
+      'Cache-Control': 'no-store, max-age=0, must-revalidate',
+      'Pragma': 'no-cache',
+      'Expires': '0',
+      // Surfaces the running version in DevTools / `curl -I` so future
+      // "is my iPad stale?" questions can be answered in 5 seconds.
+      'X-App-Version': version,
+    });
+    res.end(html);
+    return;
+  }
+
   // Everything else requires auth.
   const user = authenticate(req);
   if (!user) {
@@ -307,6 +351,16 @@ async function handleRequest(req, res, dataDir) {
         sendJson(res, 400, { error: `Bad request: ${result}` });
         return;
       }
+    }
+
+    // v0.45.0: role-based authorisation. Runs AFTER shape validation so a
+    // viewer trying to hit `products:update` gets "Forbidden" rather than a
+    // misleading "Bad request" if the payload also happens to be wrong.
+    // Local IPC is bypassed entirely — this only fires for /api/rpc.
+    const { isAllowed } = require('../util/permissions');
+    if (!isAllowed(user.role, channel)) {
+      sendJson(res, 403, { error: `Forbidden: role "${user.role}" cannot use ${channel}` });
+      return;
     }
 
     try {
