@@ -346,6 +346,23 @@ export function Lightbox({ open, onClose, images, startIndex = 0, title, product
           {spin ? <span className="lightbox__filename"> · 360° spin</span>
             : (current?.filename ? <span className="lightbox__filename"> · {current.filename}</span> : null)}
         </div>
+        {/* v0.49.41: moved the image-metadata caption (added v0.49.34)
+            up here into the header. Pre-v0.49.41 it floated at the
+            bottom of the stage at `bottom: 28px`, which sat right on
+            top of the Flip H / Flip V toolbar — the words physically
+            overlapped on every product that had a flip-eligible main
+            image. The header is dead space below the counter, has no
+            other UI competing for it, and groups identity info
+            together (counter / filename / dims / size / format) which
+            reads better than splitting them across opposite ends of
+            the lightbox anyway. Only renders when productId is set
+            (Library is the caller); the AI gallery's lightbox stays
+            uncluttered. */}
+        {productId ? (
+          <div className="lightbox__meta">
+            {renderMetaCaption(meta)}
+          </div>
+        ) : null}
         {images.length > 1 ? (
           <div className="lightbox__spin-controls">
             <button
@@ -487,18 +504,12 @@ export function Lightbox({ open, onClose, images, startIndex = 0, title, product
         ) : null}
       </div>
 
-      {/* v0.49.34: image metadata caption — dimensions, file size, format,
-          short content hash. Sits below the stage so it doesn't fight the
-          preview. Only renders when productId is set (Library is the only
-          caller that passes it; AI gallery's lightbox stays uncluttered).
-          The caption shows "Loading…" briefly on slide change while the
-          IPC roundtrips — typically <10 ms locally, longer over the LAN in
-          client mode but still well under a second. */}
-      {productId ? (
-        <div className="lightbox__caption" onClick={(e) => e.stopPropagation()}>
-          {renderMetaCaption(meta)}
-        </div>
-      ) : null}
+      {/* v0.49.34 had the metadata caption here, absolutely positioned at
+          `bottom: 28px`. v0.49.41 moved it up into the lightbox__header
+          (below the counter line) because the bottom position physically
+          overlapped the Flip H / Flip V toolbar at the same vertical band.
+          See the new <div className="lightbox__meta"> inside lightbox__header
+          above. */}
 
       {images.length > 1 ? (
         <button

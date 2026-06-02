@@ -3462,29 +3462,26 @@ body[data-role="photographer"] .image-tile__nav-btn { display: none !important; 
   font-family: var(--font-mono, ui-monospace, SFMono-Regular, monospace);
 }
 
-/* v0.49.34: image-metadata caption — dimensions, file size, format,
-   short content hash. Sits below the stage in the lower-center of the
-   overlay so it doesn't crowd the image itself. Pointer-events stay on
-   the row so the user can hover for tooltips, but each <span> inside
-   is just text — no clickable affordances. */
-.lightbox__caption {
-  position: absolute;
-  left: 50%;
-  bottom: 28px;
-  transform: translateX(-50%);
-  max-width: 90vw;
-  padding: 7px 14px;
-  background: rgba(0, 0, 0, 0.55);
-  color: rgba(255, 255, 255, 0.92);
-  border-radius: 6px;
-  font-size: 12px;
+/* v0.49.41: image-metadata caption moved into the lightbox__header
+   (was bottom-floating in v0.49.34 → v0.49.40 and collided with the
+   Flip H / Flip V toolbar on every flippable image). Renders as an
+   inline subtitle below the counter row. Inherits the header's
+   left-aligned, top-left placement so it can't fight any
+   bottom-positioned UI. Pointer-events stay on so users can select
+   the hash text for copy. The legacy .lightbox__caption-* helper
+   classes are kept (renderMetaCaption emits them) — they just style
+   text colour now, no positioning.
+   Selector targets `.lightbox__header .lightbox__meta` so any future
+   reuse of `.lightbox__meta` outside the header gets its own styles. */
+.lightbox__header .lightbox__meta {
+  margin-top: 4px;
+  color: rgba(255, 255, 255, 0.78);
+  font-size: 11px;
   font-family: var(--font-mono, ui-monospace, SFMono-Regular, monospace);
   letter-spacing: 0.02em;
   white-space: nowrap;
-  text-align: center;
   pointer-events: auto;
   user-select: text;
-  z-index: 5;
 }
 .lightbox__caption-loading,
 .lightbox__caption-missing {

@@ -2,6 +2,15 @@ import { Modal } from './ui.jsx';
 
 const CHANGELOG = [
   {
+    version: '0.49.41',
+    date: '2026-06-02',
+    items: [
+      'FIX — Lightbox image-metadata caption overlapped the Flip H / Flip V toolbar. The caption (added v0.49.34: dims · MP · size · format · sha) was absolutely positioned at `bottom: 28px`, which sat right where the flip toolbar lives — so on any flippable image the words physically piled up on top of each other. Moved the caption up into the lightbox header as an inline subtitle under the counter line. Reads as: "1 / 2 · WB-M5630-WK-001.jpg" on the top line, then "1600 × 1600 · 2.6 MP · 264 KB · JPEG · sha:51d9d567" right below it. Frees the bottom band for the flip toolbar + prev/next nav.',
+      'Bonus: grouping the metadata with the counter + filename reads better as a "this is what I\'m looking at" identity block, vs. splitting that info across opposite ends of the lightbox.',
+      'Internal — `.lightbox__caption` styles dropped in favour of `.lightbox__header .lightbox__meta`. The renderMetaCaption helper and its `.lightbox__caption-*` text-colour classes still apply (loading / missing / separator styles unchanged).',
+    ],
+  },
+  {
     version: '0.49.40',
     date: '2026-06-01',
     items: [
