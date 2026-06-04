@@ -1,5 +1,6 @@
 const crypto = require('node:crypto');
 const { getDb } = require('./index');
+const { clampIndexPad, sanitizeIndexPrefix } = require('../util/exportIndex');
 
 function rowToProfile(row) {
   if (!row) return null;
@@ -16,6 +17,11 @@ function rowToProfile(row) {
     colorProfile: row.color_profile,
     namingPattern: row.naming_pattern,
     outputSubfolder: row.output_subfolder,
+    // v0.49.42: per-profile {INDEX} formatting. NULL in legacy rows →
+    // clamp helper defaults to 3-digit / no prefix, so existing profiles
+    // keep exporting the same names they did before this column existed.
+    indexPad: row.index_pad,
+    indexPrefix: row.index_prefix,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -47,10 +53,12 @@ function create(input) {
       `INSERT INTO export_profiles (
          id, company_id, name, marketplace, width, height, format, quality,
          background_color, color_profile, naming_pattern, output_subfolder,
+         index_pad, index_prefix,
          created_at, updated_at
        ) VALUES (
          @id, @companyId, @name, @marketplace, @width, @height, @format, @quality,
          @backgroundColor, @colorProfile, @namingPattern, @outputSubfolder,
+         @indexPad, @indexPrefix,
          @createdAt, @updatedAt
        )`,
     )
@@ -67,6 +75,8 @@ function create(input) {
       colorProfile:    input.colorProfile ?? 'sRGB',
       namingPattern:   input.namingPattern ?? '{SKU}-{INDEX}',
       outputSubfolder: input.outputSubfolder ?? null,
+      indexPad:        clampIndexPad(input.indexPad),
+      indexPrefix:     sanitizeIndexPrefix(input.indexPrefix),
       createdAt:       ts,
       updatedAt:       ts,
     });
@@ -84,6 +94,8 @@ const UPDATABLE = {
   colorProfile:    { col: 'color_profile' },
   namingPattern:   { col: 'naming_pattern' },
   outputSubfolder: { col: 'output_subfolder' },
+  indexPad:        { col: 'index_pad',    transform: clampIndexPad },
+  indexPrefix:     { col: 'index_prefix', transform: sanitizeIndexPrefix },
 };
 
 function update(id, patch) {

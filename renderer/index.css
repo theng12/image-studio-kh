@@ -6660,6 +6660,23 @@ body[data-role="photographer"] .image-tile__nav-btn { display: none !important; 
 }
 .naming-builder__sep .input--select { width: 180px; }
 
+/* v0.49.42: per-profile {INDEX} format controls (digits + prefix). */
+.naming-builder__index {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s-4);
+  margin-top: var(--s-2);
+}
+.naming-builder__index-field {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  font-size: 12.5px;
+  color: var(--c-text-muted);
+}
+.naming-builder__index-field .input--select { width: 150px; }
+.naming-builder__index-field .input { width: 170px; }
+
 .naming-builder__preview {
   display: flex;
   flex-wrap: wrap;
@@ -7351,6 +7368,89 @@ body[data-role="photographer"] .image-tile__nav-btn { display: none !important; 
   height: 100%;
   object-fit: contain;
   pointer-events: none;
+}
+
+/* v0.49.44: truthful preview layer. Sits above the backdrop, below the
+   element selection boxes. `object-fit: cover` matches the export's
+   composition (the rendered PNG is at the design canvas's aspect
+   ratio, same as the editor's letterboxed canvas size). Pointer-events
+   off so clicks pass through to the element overlays below. */
+.ovl-canvas__truthful {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  pointer-events: none;
+  z-index: 1;
+}
+
+/* When the canvas is in "truthful" mode, hide the HTML approximation
+   of each element's content (text / barcode / image) so the user
+   doesn't see the slow-drift HTML version stacked on top of the
+   pixel-accurate PNG below. Selection boxes + drag/resize handles
+   stay visible (they're siblings, not descendants of these content
+   spans, in the element overlay's DOM). */
+.ovl-canvas--truthful .ovl-element__text,
+.ovl-canvas--truthful .ovl-element__barcode,
+.ovl-canvas--truthful .ovl-element__image {
+  opacity: 0;
+}
+
+/* Status indicator dot in the meta line. Three states — busy (amber
+   pulse), live (green), approx (slate). Inline-block so it sits on
+   the baseline next to the text. */
+.ovl-canvas__preview-status { margin-left: 4px; }
+.ovl-canvas__preview-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  margin-right: 4px;
+  vertical-align: -1px;
+}
+.ovl-canvas__preview-dot--live { background: var(--c-emerald, #10b981); }
+.ovl-canvas__preview-dot--approx { background: var(--c-text-muted, #71717a); }
+.ovl-canvas__preview-dot--busy {
+  background: var(--c-amber, #f59e0b);
+  animation: ovl-preview-pulse 1.1s ease-in-out infinite;
+}
+@keyframes ovl-preview-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.35; }
+}
+
+/* v0.49.44: Undo / Redo buttons styled with weight so they stand out
+   in a long toolbar. Disabled state stays accessible (~0.45 opacity
+   keeps the icon readable but signals non-interactivity). */
+.ovl-toolbar__history { gap: 4px; }
+.ovl-toolbar__history-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 11px;
+  background: var(--c-bg, #fff);
+  border: 1px solid var(--c-border-strong, #a1a1aa);
+  border-radius: 6px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--c-text);
+  cursor: pointer;
+  font-family: inherit;
+}
+.ovl-toolbar__history-btn:hover:not(:disabled) {
+  background: var(--c-bg-hover, rgba(0,0,0,0.04));
+  border-color: var(--c-accent, #3b82f6);
+  color: var(--c-accent, #3b82f6);
+}
+.ovl-toolbar__history-btn:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+.ovl-toolbar__history-icon {
+  font-size: 16px;
+  line-height: 1;
+  font-weight: 600;
 }
 .ovl-canvas__backdrop--checker {
   background:

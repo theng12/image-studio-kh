@@ -33,6 +33,8 @@
  */
 
 const { ipcMain, app, BrowserWindow } = require('electron');
+// v0.49.43: 429 retry/backoff math (pure helper — no electron dep).
+const { retryWaitMs, shouldRetry } = require('../util/rateLimitRetry');
 // v0.15.1: WebSocket client (same `ws` lib as the server). Used in
 // client mode to subscribe to live update events. Loaded lazily so
 // standalone / server mode doesn't pay the import cost.
@@ -227,43 +229,63 @@ async function rpc(channel, args) {
   let responseBytes = 0;
   let body = null;
   try {
-    try {
-      res = await fetch(`${url}/api/rpc`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: auth },
-        body: requestBody,
-        // v0.32.0: every other fetch here has a timeout EXCEPT this one —
-        // so a stalled call (slow Tailscale hop, server mid-GC, a response
-        // that starts then hangs) blocked forever. That's the "first sync
-        // stuck at 29.7 KB" + "CSV import never finishes" symptom: one hung
-        // call freezes the whole bootstrap await-chain with no error. 120s
-        // is generous for a big bulkUpsert / full product list, but finite,
-        // so a genuine stall now rejects → the chip turns red + the UI
-        // recovers instead of spinning forever.
-        signal: AbortSignal.timeout(120_000),
-      });
-    } catch (err) {
-      // Network-level failure → flag disconnected so the sidebar chip can
-      // turn red. v0.26.34: route through analyzeFetchError so the
-      // toast shows the actual reason ("Server refused the connection
-      // on port 13180") instead of the opaque "fetch failed".
-      const { analyzeFetchError } = require('../util/fetchErrors');
-      const analyzed = analyzeFetchError(err, url);
-      setConnectionState({ status: 'disconnected', lastError: analyzed.message });
-      _syncStats.errorCount += 1;
-      throw new Error(analyzed.message);
-    }
+    // v0.49.43: retry loop for HTTP 429. The server's /api/rpc limiter
+    // (120 calls / 10s per token) returns a 429 + Retry-After when a
+    // burst — e.g. a post-bulk-op refetch — exceeds it. Previously we
+    // threw immediately and failed the whole operation; now we wait the
+    // hinted interval and retry a bounded number of times so transient
+    // bursts self-heal. Non-429 responses fall straight through.
+    for (let attempt = 0; ; attempt++) {
+      try {
+        res = await fetch(`${url}/api/rpc`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: auth },
+          body: requestBody,
+          // v0.32.0: every other fetch here has a timeout EXCEPT this one —
+          // so a stalled call (slow Tailscale hop, server mid-GC, a response
+          // that starts then hangs) blocked forever. That's the "first sync
+          // stuck at 29.7 KB" + "CSV import never finishes" symptom: one hung
+          // call freezes the whole bootstrap await-chain with no error. 120s
+          // is generous for a big bulkUpsert / full product list, but finite,
+          // so a genuine stall now rejects → the chip turns red + the UI
+          // recovers instead of spinning forever.
+          signal: AbortSignal.timeout(120_000),
+        });
+      } catch (err) {
+        // Network-level failure → flag disconnected so the sidebar chip can
+        // turn red. v0.26.34: route through analyzeFetchError so the
+        // toast shows the actual reason ("Server refused the connection
+        // on port 13180") instead of the opaque "fetch failed".
+        const { analyzeFetchError } = require('../util/fetchErrors');
+        const analyzed = analyzeFetchError(err, url);
+        setConnectionState({ status: 'disconnected', lastError: analyzed.message });
+        _syncStats.errorCount += 1;
+        throw new Error(analyzed.message);
+      }
 
-    // Read response body as text first so we know its byte count, then
-    // parse JSON. The double-pass costs ~1 ms per call vs. .json()
-    // directly, but it gives us an accurate "bytes downloaded" stat
-    // even when the server omits Content-Length (chunked transfer).
-    let responseText = '';
-    try {
-      responseText = await res.text();
-      responseBytes = Buffer.byteLength(responseText, 'utf8');
-      if (responseText) body = JSON.parse(responseText);
-    } catch (_) { /* leave body null; downstream handles */ }
+      // Read response body as text first so we know its byte count, then
+      // parse JSON. The double-pass costs ~1 ms per call vs. .json()
+      // directly, but it gives us an accurate "bytes downloaded" stat
+      // even when the server omits Content-Length (chunked transfer).
+      let responseText = '';
+      body = null;
+      try {
+        responseText = await res.text();
+        responseBytes += Buffer.byteLength(responseText, 'utf8');
+        if (responseText) body = JSON.parse(responseText);
+      } catch (_) { /* leave body null; downstream handles */ }
+
+      // Rate limited → wait the server's Retry-After (or backoff) and try
+      // again, up to the helper's cap. After the cap, fall through and let
+      // the !res.ok branch surface the rate-limit message as a normal error.
+      if (res.status === 429 && shouldRetry(attempt)) {
+        const waitMs = retryWaitMs(res.headers.get('retry-after'), attempt);
+        process.stdout.write(`[client rpc] 429 on ${channel}; retrying in ${waitMs}ms (attempt ${attempt + 1})\n`);
+        await new Promise((resolve) => setTimeout(resolve, waitMs));
+        continue;
+      }
+      break;
+    }
 
     if (res.status === 401) {
       setConnectionState({ status: 'disconnected', lastError: 'Token rejected' });

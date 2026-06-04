@@ -34,7 +34,11 @@ export function BulkOverlayRunModal({ open, productIds, filters, onClose, onDone
   const [templates, setTemplates] = useState([]);
   const [templateId, setTemplateId] = useState('');
   const [scope, setScope] = useState('selection'); // 'selection' | 'filter'
-  const [destination, setDestination] = useState('append'); // 'append' | 'replaceMain' | 'saveToFolder'
+  // v0.49.44: `appendAsMain` replaces `replaceMain` as the user-facing
+  // choice for "render becomes main, original kept at position 1". The
+  // backend accepts both kinds (alias), so any saved presets / older
+  // sessions that hold `replaceMain` keep working.
+  const [destination, setDestination] = useState('append'); // 'append' | 'appendAsMain' | 'saveToFolder'
   const [folder, setFolder] = useState('');
   const [submitting, setSubmitting] = useState(false);
 
@@ -203,16 +207,22 @@ export function BulkOverlayRunModal({ open, productIds, filters, onClose, onDone
               <span className="muted"> — original images untouched, render added to end</span>
             </span>
           </label>
+          {/* v0.49.44: renamed from "Replace main" because that label
+              sounded destructive. The behaviour was always to append
+              the render then promote it to main, with the original
+              kept at position 1 — nothing is deleted. New label says
+              that plainly. Backend still accepts `replaceMain` as a
+              kind alias for backward compat. */}
           <label className="bulk-overlay-run__radio">
             <input
               type="radio"
               name="overlay-dest"
-              checked={destination === 'replaceMain'}
-              onChange={() => setDestination('replaceMain')}
+              checked={destination === 'appendAsMain' || destination === 'replaceMain'}
+              onChange={() => setDestination('appendAsMain')}
             />
             <span>
-              <strong>Replace main</strong>
-              <span className="muted"> — render becomes position 0, original demotes to position 1 (kept)</span>
+              <strong>Append as main image</strong>
+              <span className="muted"> — render becomes position 0 (the main), original demotes to position 1 (kept, not deleted)</span>
             </span>
           </label>
           <label className="bulk-overlay-run__radio">

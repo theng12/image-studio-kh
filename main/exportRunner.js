@@ -6,6 +6,7 @@ const products = require('./db/products');
 const productImages = require('./db/productImages');
 const brands = require('./db/brands');
 const { slugify } = require('./util/slug');
+const { formatIndexToken } = require('./util/exportIndex');
 
 /* ── Filename token builder ───────────────────────────────────── */
 
@@ -28,7 +29,11 @@ function resolveToken(token, ctx) {
     case 'NAME':   return slugifyFilename(ctx.product.name ?? '');
     case 'COLOR':  return slugifyFilename(ctx.product.colorFinish ?? '');
     case 'BRAND':  return slugifyFilename(ctx.brand?.name ?? '');
-    case 'INDEX':  return String(ctx.imageIndex + 1).padStart(2, '0');
+    // v0.49.42: per-profile {INDEX} formatting — pad width (1–4) + an
+    // optional fixed prefix (A001, B1, 0001, …). Falls back to a 3-digit
+    // plain number when the profile predates these fields. ctx.profile is
+    // threaded in by buildFilename's callers; default to {} defensively.
+    case 'INDEX':  return formatIndexToken(ctx.imageIndex, ctx.profile ?? {});
     case 'DATE':   return ctx.dateStr;
     default:       return '';
   }
@@ -144,7 +149,7 @@ function expectedOutputs({ profile, productIds }) {
     const brand = product.brandId ? brands.get(product.brandId) : null;
     const images = productImages.listByProduct(productId);
     for (let i = 0; i < images.length; i++) {
-      const ctx = { product, brand, imageIndex: i, dateStr };
+      const ctx = { product, brand, imageIndex: i, dateStr, profile };
       const base = buildFilename(profile.namingPattern || '{SKU}-{INDEX}', ctx);
       const filename = `${base}${ext}`;
       const rel = subfolder ? path.join(subfolder, filename) : filename;
@@ -352,7 +357,7 @@ async function runExport({ profile, productIds, outputRoot, onProgress, onExisti
         continue;
       }
 
-      const ctx = { product, brand, imageIndex: i, dateStr };
+      const ctx = { product, brand, imageIndex: i, dateStr, profile };
       const base = buildFilename(profile.namingPattern || '{SKU}-{INDEX}', ctx);
       // v0.26.24: collision-aware resolver. Returns { outPath, action }
       // where action drives the per-iteration branch below.

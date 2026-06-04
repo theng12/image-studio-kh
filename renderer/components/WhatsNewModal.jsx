@@ -2,6 +2,40 @@ import { Modal } from './ui.jsx';
 
 const CHANGELOG = [
   {
+    version: '0.49.44',
+    date: '2026-06-04',
+    items: [
+      'NEW — Overlay Studio editor canvas now shows the **actual exported render** as a backdrop, not just an HTML approximation. When you stop interacting (no drag, no inspector edit) for 400ms, the canvas calls `templates:renderPreview` on the server, gets back the real sharp+SVG render, and displays it where the HTML approximation used to live. The element selection boxes and drag handles float on top so you can still pick / drag / resize. The moment you grab a handle, the canvas flips back to the fast HTML approximation for smooth interaction. The moment you let go, it re-fetches the truthful render. What you see while idle is exactly what `Apply` produces — fonts, baselines, bg-pill sizes all match because they come from the same code path.',
+      'Status indicator in the canvas meta line tells you which mode you\'re in: **● Preview matches export** (green dot — truthful render is showing), **● Updating preview…** (amber pulsing — server is rendering), **● Approximation (interacting)** (grey — you\'re mid-drag, HTML approximation is showing). Pick a backdrop product first to enable it (a product is required to run the actual sharp pipeline; without one the editor shows only the HTML approximation as before).',
+      'CHANGE — "Replace main" destination renamed to **"Append as main image"** in the Library bulk overlay modal. Same behaviour as before: the rendered image becomes position 0 (the main), the original demotes to position 1 — nothing is deleted. The "Replace" label sounded destructive and people were avoiding it as a result. New label says plainly what happens to both images. Backend accepts `appendAsMain` as the canonical kind AND continues to accept the old `replaceMain` as an alias so saved presets / older builds keep working.',
+      'UI — Undo / Redo buttons promoted from small `segment` chips to bordered, weighted buttons (↶ Undo, ↷ Redo) in their own toolbar group. The history infrastructure (50-step stack, 300ms settle commit, Cmd+Z + Cmd+Shift+Z bindings) has existed since v0.25.0 — but the buttons were getting lost in a busy toolbar. This release just makes them findable.',
+      'Internal — `EditorCanvas` gained `backdropProductId` prop + a debounced `templates:renderPreview` IPC fetch + blob-URL lifecycle handling (revoke previous on swap, revoke on unmount). CSS `.ovl-canvas--truthful` modifier on the canvas wrapper hides each element\'s HTML content (`.ovl-element__text` / `.ovl-element__barcode` / `.ovl-element__image`) so the user doesn\'t see the HTML approximation stacked on top of the truthful PNG. `main/ipc/templates.js` accepts `appendAsMain` alongside the existing `replaceMain` in both single-product and bulk apply paths. `BulkOverlayRunModal` radio shows the new label; existing `replaceMain` state values still resolve to the same checked-radio.',
+      'Verified: 100/100 tests pass. Build clean.',
+    ],
+  },
+  {
+    version: '0.49.43',
+    date: '2026-06-04',
+    items: [
+      'FIX — "Rate limit exceeded" errors during bulk image operations (auto-crop, enhance, convert·compress·resize) on a client Mac. Root cause: each bulk op broadcast one catalog-change event PER PRODUCT, and because products finish over time (real sharp processing), the client\'s 250 ms burst-coalescer couldn\'t collapse them — so it fired ~3 refetch requests per product. A dozens-of-products run blew past the server\'s 120-calls-per-10s limit, and the operation appeared to fail even though the images were processed fine.',
+      'Server fix: the three bulk image handlers now emit a lightweight per-product "tick" (refreshes only an open product\'s gallery, if you\'re looking at it) plus a SINGLE full refresh event at the end of the run. So a 40-product re-encode now causes one grid/dashboard refetch instead of ~120 requests. The live per-product refresh for whatever product you have open in the side panel is preserved.',
+      'Client fix (applies to everything, not just bulk ops): when the server does return a 429, the client now honours the `Retry-After` hint and quietly retries (bounded backoff, up to a few attempts) instead of throwing. So a brief burst — a refetch storm, rapid pagination, two operations back-to-back — self-heals instead of erroring. Running exports benefit from this safety net too.',
+      'The 120/10s limit itself is unchanged — it still guards against runaway loops; we removed the request fan-out that was hitting it rather than weakening the guard.',
+      'Multi-Mac note: update BOTH the server Mac (for the single-event change) and the client Mac (for the 429 retry). Internal: pure helpers `util/rateLimitRetry.js` + the `batch` flag on `images` catalog events; both unit-tested.',
+    ],
+  },
+  {
+    version: '0.49.42',
+    date: '2026-06-04',
+    items: [
+      'NEW — the Export Center `{INDEX}` token is now configurable PER PROFILE. The profile editor (when `{INDEX}` is in the naming pattern) gains two controls: **Index digits** (1 / 2 / 3 / 4 → `1` · `01` · `001` · `0001`) and **Index prefix** (optional letters/digits, e.g. `A` → `A001`, `B` → `B1`). The live preview reflects your choice as you type.',
+      'This covers the schemes people asked for: `01/02`, `001/002`, `0001/0002`, and lettered series like `A1/A2`, `B1/B2`, `A001/A002`. The prefix is a fixed label set on the profile — to run an A-series and a B-series, make two profiles (or Duplicate one and change the prefix).',
+      'Default for new profiles is **3 digits, no prefix** (`001`), which also matches how the app names images in its own asset storage — so on-disk and exported numbering agree out of the box.',
+      'Backwards-compatible: existing profiles read as "3 digits, no prefix" until you change them, and the change only affects FUTURE exports — files already on disk are untouched. The setting is stored on the profile (`index_pad` / `index_prefix`, additive DB columns), so it travels with Duplicate and survives upgrades. Prefixes are sanitised to letters/digits so they can\'t break filenames.',
+      'Note for Multi-Mac setups: export filenames are generated on whichever Mac runs the export (the server, when you\'re a client). Update that Mac to v0.49.42 too so client and server produce identical names.',
+    ],
+  },
+  {
     version: '0.49.41',
     date: '2026-06-02',
     items: [

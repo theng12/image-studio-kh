@@ -740,11 +740,19 @@ function register({ expose, emitCatalogChange, assertProductInActiveCompany, SAF
       }
       if (any) {
         products.touchUpdated(productId);
-        emitCatalogChange('images', 'autocrop', productId);
+        // v0.49.43: `batch: true` → the client refreshes ONLY this product's
+        // gallery if it's open, and skips the full grid/dashboard refetch.
+        // The single end-of-batch event below drives that refetch once, so a
+        // dozens-of-products run no longer fans out into a refetch storm that
+        // trips the server's own rate limiter.
+        emitCatalogChange('images', 'autocrop', productId, { batch: true });
         auditImage(productId, 'image:autocrop', { scale: args.scale, fillMode: args.fillMode });
         productsTouched += 1;
       }
     }
+
+    // One full refetch for the whole batch (no `batch` flag → grid + dashboard).
+    if (productsTouched > 0) emitCatalogChange('images', 'autocropBatch', null);
 
     return { images, products: productsTouched, failed, missing, failures };
   });
@@ -815,11 +823,14 @@ function register({ expose, emitCatalogChange, assertProductInActiveCompany, SAF
       }
       if (any) {
         products.touchUpdated(productId);
-        emitCatalogChange('images', 'enhance', productId);
+        // v0.49.43: per-product tick (open-product gallery only); see autocrop.
+        emitCatalogChange('images', 'enhance', productId, { batch: true });
         auditImage(productId, 'image:autoenhance', { scope, saturation: args.saturation });
         productsTouched += 1;
       }
     }
+
+    if (productsTouched > 0) emitCatalogChange('images', 'enhanceBatch', null);
 
     return { images, products: productsTouched, failed, missing, failures };
   });
@@ -1023,7 +1034,8 @@ function register({ expose, emitCatalogChange, assertProductInActiveCompany, SAF
       }
       if (any) {
         products.touchUpdated(productId);
-        emitCatalogChange('images', 'reencode', productId);
+        // v0.49.43: per-product tick (open-product gallery only); see autocrop.
+        emitCatalogChange('images', 'reencode', productId, { batch: true });
         auditImage(productId, 'image:reencode', {
           targetFormat, quality, stripMetadata, resizeMode,
           ...(resizeMode === 'longEdge' ? { resizeLongEdge } : null),
@@ -1032,6 +1044,8 @@ function register({ expose, emitCatalogChange, assertProductInActiveCompany, SAF
         productsTouched += 1;
       }
     }
+
+    if (productsTouched > 0) emitCatalogChange('images', 'reencodeBatch', null);
 
     return { images, products: productsTouched, failed, missing, failures, bytesSaved: bytesSavedTotal };
   });

@@ -170,7 +170,7 @@ function register({ expose, emitCatalogChange }) {
     const ctx = buildTemplateContext(product);
     const bytes = await templateRenderer.compose({ inputImage: baseAbs, template, context: ctx });
 
-    if (destination.kind === 'append' || destination.kind === 'replaceMain') {
+    if (destination.kind === 'append' || destination.kind === 'replaceMain' || destination.kind === 'appendAsMain') {
       // Cap check — same limit as importForProduct.
       const imageManager = require('../imageManager');
       if (images.length >= imageManager.MAX_IMAGES_PER_PRODUCT) {
@@ -186,12 +186,16 @@ function register({ expose, emitCatalogChange }) {
         // already there, we just didn't insert a new row.
         return { outputFilepath: image.filepath, image, skipped: true };
       }
-      if (destination.kind === 'replaceMain') {
+      // v0.49.44: both the legacy `replaceMain` and the new
+      // `appendAsMain` promote the rendered image to position 0.
+      // Original main demotes to position 1 — nothing is deleted.
+      const promotesToMain = destination.kind === 'replaceMain' || destination.kind === 'appendAsMain';
+      if (promotesToMain) {
         productImages.setMain(product.id, image.filepath);
       }
       products.recomputeProcessStatus(product.id);
       products.touchUpdated(product.id);
-      emitCatalogChange('images', destination.kind === 'replaceMain' ? 'setMain' : 'add', product.id);
+      emitCatalogChange('images', promotesToMain ? 'setMain' : 'add', product.id);
 
       return { outputFilepath: image.filepath, image };
     }
@@ -341,7 +345,7 @@ async function applyBulkInternal({ templateId, productIds, destination, companyI
         const ctx = buildTemplateContext(product);
         const bytes = await templateRenderer.compose({ inputImage: baseAbs, template, context: ctx });
 
-        if (destination.kind === 'append' || destination.kind === 'replaceMain') {
+        if (destination.kind === 'append' || destination.kind === 'replaceMain' || destination.kind === 'appendAsMain') {
           if (imageList.length >= imageManager.MAX_IMAGES_PER_PRODUCT) {
             skipped.push({ productId: pid, sku: product.sku, reason: 'image cap reached' });
             continue;

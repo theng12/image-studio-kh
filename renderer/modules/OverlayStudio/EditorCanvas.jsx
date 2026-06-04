@@ -21,6 +21,10 @@ export function EditorCanvas({
   onChangeElement,
   backdropSrc,
   productContext,
+  // v0.49.44: WYSIWYG preview needs the product id to ask the server for
+  // a real composition render. Optional — when null (no product picked
+  // yet) we skip the fetch and the user sees only the HTML approximation.
+  backdropProductId = null,
   // v0.24.0 (Phase 2): snap state lives in TemplateEditor and is
   // threaded down so the toolbar's Snap toggle can drive it. Default
   // is ON (snap to a 1% grid). Smart guides ALWAYS run when an element
@@ -36,6 +40,134 @@ export function EditorCanvas({
   // Live alignment guides shown during drag. Cleared on pointer-up.
   // Each guide is `{ axis: 'x'|'y', pos: number_in_canvas_px }`.
   const [guides, setGuides] = useState([]);
+
+  /* ─── v0.49.44: WYSIWYG truthful preview ──────────────────────────
+   *
+   * Two rendering modes for the canvas content:
+   *
+   *   - HTML approximation (the existing pre-v0.49.44 behaviour): each
+   *     element renders as an absolutely-positioned <div> with browser
+   *     CSS text rendering. Fast, redraws on every keystroke, but
+   *     drifts from the actual export because the browser and the
+   *     server's sharp+SVG renderer use completely different text
+   *     metrics, font fallback chains, and baseline math.
+   *
+   *   - Truthful preview: server runs the actual composition pipeline
+   *     and returns a PNG. We display that PNG on top of the backdrop
+   *     so what the user sees IS what the export will produce.
+   *
+   * When to show which:
+   *   - During active interaction (pointer-down on the canvas — drag,
+   *     resize, anything) → HTML approximation. The PNG is
+   *     instantaneously stale the moment a handle moves; chasing it
+   *     would feel laggy.
+   *   - When settled (no interaction + 400 ms since last template edit)
+   *     → fire `templates:renderPreview`, replace the canvas content
+   *     with the returned PNG. Element selection boxes + handles stay
+   *     visible on top so the user can still select/drag.
+   *
+   * Implementation:
+   *   - `truthfulPng` holds the latest rendered PNG blob URL (or null
+   *     before the first render lands).
+   *   - `isInteracting` flips true on any pointer-down inside the
+   *     canvas, false on the window-level pointer-up. Window-level
+   *     because pointer captures sometimes release outside the
+   *     canvas (e.g. handle resize past the canvas edge).
+   *   - `previewBusy` shows a small "Updating preview…" indicator in
+   *     the meta line so users know the visible result is mid-update.
+   *
+   * The truthful PNG is added/removed via a CSS class on the canvas
+   * div (`ovl-canvas--truthful`). When that class is present, CSS
+   * hides the inner content of every ElementOverlay (text / barcode /
+   * image), leaving only the selection rect + handles. The PNG fills
+   * the same area so the user sees the actual composition.
+   */
+  const [truthfulPng, setTruthfulPng] = useState(null);
+  const [previewBusy, setPreviewBusy] = useState(false);
+  const [isInteracting, setIsInteracting] = useState(false);
+  const previewTimerRef = useRef(null);
+  // Latest blob URL — kept in a ref too so we can revoke the previous
+  // URL when a new render lands, without racing with React state.
+  const truthfulPngRef = useRef(null);
+
+  // Pointer-up anywhere on the window ends interaction. Capture-phase
+  // because the canvas's own children sometimes setPointerCapture and
+  // swallow bubbles — we still want the up to register.
+  useEffect(() => {
+    function onUp() { setIsInteracting(false); }
+    window.addEventListener('pointerup', onUp, true);
+    window.addEventListener('pointercancel', onUp, true);
+    return () => {
+      window.removeEventListener('pointerup', onUp, true);
+      window.removeEventListener('pointercancel', onUp, true);
+    };
+  }, []);
+
+  // Debounced truthful render. Re-fires whenever the template, the
+  // backdrop product, or the canvas dimensions change, but only after
+  // the user has been idle for 400 ms. During interaction we DON'T
+  // bother firing — the in-flight render would just be wasted work
+  // (its output would be stale by the time it arrived). Once
+  // interaction ends, the next template change (or this effect's
+  // re-run from `isInteracting` flipping) schedules a render.
+  useEffect(() => {
+    if (!template || !backdropProductId) return undefined;
+    if (isInteracting) return undefined;
+    if (typeof window?.api?.templates?.renderPreview !== 'function') return undefined;
+
+    if (previewTimerRef.current) clearTimeout(previewTimerRef.current);
+    previewTimerRef.current = setTimeout(async () => {
+      setPreviewBusy(true);
+      try {
+        const result = await window.api.templates.renderPreview({
+          // Pass the FULL in-progress template inline so the server
+          // doesn't have to re-fetch the saved version (which may be
+          // out of date). The IPC handler accepts `template` directly
+          // — see main/ipc/templates.js.
+          template,
+          productId: backdropProductId,
+        });
+        const bytes = result?.bytes;
+        if (!bytes) return;
+        // bytes is a Buffer (standalone) or a Buffer reconstructed
+        // from the {__bin, b64} wire envelope (client mode). Both
+        // are Uint8Array-compatible — Blob accepts either.
+        const blob = new Blob([bytes], { type: 'image/png' });
+        const url = URL.createObjectURL(blob);
+        // Revoke the previous URL AFTER the new one is set so React
+        // never paints with a revoked src.
+        const prev = truthfulPngRef.current;
+        truthfulPngRef.current = url;
+        setTruthfulPng(url);
+        if (prev) {
+          // Defer to next tick — the same paint cycle that swaps the
+          // src may still reference the prev URL briefly.
+          setTimeout(() => URL.revokeObjectURL(prev), 0);
+        }
+      } catch (_err) {
+        // Non-fatal — keep the last good preview if any. The HTML
+        // approximation is still there during interaction either way.
+      } finally {
+        setPreviewBusy(false);
+      }
+    }, 400);
+    return () => {
+      if (previewTimerRef.current) clearTimeout(previewTimerRef.current);
+    };
+  }, [template, backdropProductId, isInteracting]);
+
+  // Cleanup blob URL on unmount so we don't leak memory across editor
+  // open/close cycles.
+  useEffect(() => () => {
+    const url = truthfulPngRef.current;
+    if (url) URL.revokeObjectURL(url);
+    truthfulPngRef.current = null;
+  }, []);
+
+  // Whether the truthful PNG should currently be VISIBLE. False during
+  // interaction (we show HTML approx for responsiveness), false if no
+  // PNG has landed yet, false if the user just hasn't picked a product.
+  const showTruthful = !!truthfulPng && !isInteracting && !!backdropProductId;
 
   // v0.26.2: compute canvas DOM size from the WRAP's available area
   // + template aspect ratio, then apply as inline width/height. Pure-
@@ -125,17 +257,30 @@ export function EditorCanvas({
     ? Math.round(Math.min(canvasSize.w, canvasSize.h) * Math.max(0.3, Math.min(1, inset.scale ?? 0.85)))
     : 0;
 
+  // v0.49.44: capture-phase pointerdown ALSO sets isInteracting. The
+  // existing `onBgPointerDown` only fires on the background; we want
+  // any pointer-down inside the canvas (incl. on element drag handles)
+  // to mark the user as interacting so the truthful PNG hides for the
+  // duration. Done by wrapping onBgPointerDown.
+  function handleCanvasPointerDown(e) {
+    setIsInteracting(true);
+    onBgPointerDown?.(e);
+  }
+
   return (
     <div ref={wrapRef} className="ovl-canvas-wrap">
       <div
         ref={canvasRef}
-        className={`ovl-canvas${snapToGrid ? ' ovl-canvas--gridded' : ''}${showBounds ? ' ovl-canvas--bounds' : ''}`}
+        className={`ovl-canvas${snapToGrid ? ' ovl-canvas--gridded' : ''}${showBounds ? ' ovl-canvas--bounds' : ''}${showTruthful ? ' ovl-canvas--truthful' : ''}`}
         // v0.26.2: explicit pixel size from the JS fit math above.
         // The earlier `aspect-ratio + width:100% + max-height:100%`
         // combo was unreliable in a flex column wider than tall — see
         // the comment on the recompute effect.
         style={{ width: canvasSize.w, height: canvasSize.h }}
-        onPointerDown={onBgPointerDown}
+        // v0.49.44: capture-phase so child handles (which often
+        // setPointerCapture themselves) don't swallow our "started
+        // interacting" signal.
+        onPointerDownCapture={handleCanvasPointerDown}
       >
         {backdropSrc ? (
           inset ? (
@@ -162,6 +307,26 @@ export function EditorCanvas({
         ) : (
           <div className="ovl-canvas__backdrop ovl-canvas__backdrop--checker" />
         )}
+
+        {/* v0.49.44: truthful preview layer. Sits BETWEEN the backdrop
+            and the element overlays so:
+              - It covers the backdrop (the rendered PNG already
+                includes the backdrop composited in via sharp).
+              - Element selection rects + drag handles render on TOP
+                of it, so the user can still pick / move things.
+              - The CSS class `ovl-canvas--truthful` (added to the
+                wrapping canvas div above) hides the inner content of
+                each ElementOverlay (the HTML text / barcode / image),
+                so the user doesn't see the HTML approximation
+                stacked on top of the truthful PNG. */}
+        {showTruthful ? (
+          <img
+            className="ovl-canvas__truthful"
+            src={truthfulPng}
+            alt=""
+            draggable={false}
+          />
+        ) : null}
 
         {/* Elements */}
         {template.elements.map((el) => (
@@ -195,6 +360,23 @@ export function EditorCanvas({
       </div>
       <div className="ovl-canvas__meta">
         Design canvas: {template.canvasWidth} × {template.canvasHeight}
+        {/* v0.49.44: truthful-preview status. The user benefits from
+            knowing whether what they see is the real export render
+            (truthful) or the fast HTML approximation (during
+            interaction or before the first server render lands). */}
+        {backdropProductId ? (
+          <span className="ovl-canvas__preview-status">
+            {previewBusy
+              ? <>· <span className="ovl-canvas__preview-dot ovl-canvas__preview-dot--busy" /> Updating preview…</>
+              : showTruthful
+                ? <>· <span className="ovl-canvas__preview-dot ovl-canvas__preview-dot--live" /> Preview matches export</>
+                : <>· <span className="ovl-canvas__preview-dot ovl-canvas__preview-dot--approx" /> Approximation (interacting)</>}
+          </span>
+        ) : (
+          <span className="ovl-canvas__preview-status muted">
+            {' '}· Pick a backdrop product to see the truthful preview
+          </span>
+        )}
       </div>
     </div>
   );

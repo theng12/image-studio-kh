@@ -179,6 +179,14 @@ function initDb(dataDir) {
   addColumnIfMissing(db, 'product_images', 'file_size', 'INTEGER');
   addColumnIfMissing(db, 'product_images', 'dedup_exempt', 'INTEGER');
 
+  /* v0.49.42: per-profile {INDEX} export-filename formatting. index_pad
+     is the zero-pad width (1–4); index_prefix is an optional literal
+     prefix (e.g. 'A' → A001). Both nullable → legacy profiles read as
+     NULL and the clampIndexPad / sanitizeIndexPrefix helpers default
+     them to 3-digit / no-prefix, so existing exports are unchanged. */
+  addColumnIfMissing(db, 'export_profiles', 'index_pad', 'INTEGER');
+  addColumnIfMissing(db, 'export_profiles', 'index_prefix', 'TEXT');
+
   /* v0.28.0: image_merge_ops — the undo log for near-duplicate merges.
      Each merge batch records full snapshots of the removed image rows
      (in removed_json) plus where their files were quarantined, so a merge

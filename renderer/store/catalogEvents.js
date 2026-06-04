@@ -46,6 +46,21 @@ export function applyCatalogEvent(get, evt) {
       scheduleSliceRefresh('dashboard', () => get().refreshDashboard());
       break;
     case 'images':
+      // v0.49.43: per-product tick during a bulk run (autocrop / enhance /
+      // re-encode emit one `{ batch: true }` event per product). Refresh ONLY
+      // the open product's strip and skip the grid + dashboard refetch — the
+      // server fires a single non-batch event at the end of the run that
+      // drives those once. Without this, a dozens-of-products run fanned out
+      // into one 3-RPC refetch per product and tripped the server's own
+      // /api/rpc rate limiter (120 calls / 10s).
+      if (evt.batch) {
+        if (evt.id && evt.id === get().activeProductId) {
+          scheduleSliceRefresh('workspaceImages', () => {
+            get().refreshWorkspaceImages(evt.id).catch(() => {});
+          });
+        }
+        break;
+      }
       // Image add/remove/setMain changes the products grid (cover thumb
       // + image count chip) and, if we happen to be viewing the same
       // product in the workspace, the workspace strip too.

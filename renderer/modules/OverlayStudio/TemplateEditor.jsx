@@ -493,27 +493,42 @@ export function TemplateEditor({ templateId, onClose, onChanged }) {
             everywhere via Cmd+Z / Cmd+Shift+Z / Cmd+D; these buttons
             make the affordance discoverable for users who don't know
             the shortcuts. */}
-        <div className="ws-toolbar__group">
+        {/* v0.49.44: Undo / Redo bumped to their own visually distinct
+            group with stronger labels. Pre-v0.49.44 they were three
+            small `segment` buttons stacked next to Duplicate, easy to
+            miss on a busy toolbar. The history infrastructure (50-step
+            stack, 300ms settle commit, Cmd+Z/Cmd+Shift+Z bindings) has
+            existed since v0.25.0 — this release just makes the buttons
+            findable. */}
+        <div className="ws-toolbar__group ovl-toolbar__history">
           <button
             type="button"
-            className="segment"
+            className="ovl-toolbar__history-btn"
             onClick={undo}
             disabled={history.past.length === 0}
-            title="Undo last change (Cmd+Z)"
-          >↶ Undo</button>
+            title="Undo last change (⌘Z)"
+            aria-label="Undo"
+          >
+            <span className="ovl-toolbar__history-icon">↶</span>
+            <span>Undo</span>
+          </button>
           <button
             type="button"
-            className="segment"
+            className="ovl-toolbar__history-btn"
             onClick={redo}
             disabled={history.future.length === 0}
-            title="Redo (Cmd+Shift+Z)"
-          >↷ Redo</button>
+            title="Redo (⌘⇧Z)"
+            aria-label="Redo"
+          >
+            <span className="ovl-toolbar__history-icon">↷</span>
+            <span>Redo</span>
+          </button>
           <button
             type="button"
             className="segment"
             onClick={() => selectedId && duplicateElement(selectedId)}
             disabled={!selectedId}
-            title="Duplicate selected element (Cmd+D)"
+            title="Duplicate selected element (⌘D)"
           >⎘ Duplicate</button>
         </div>
         {/* v0.26.0 (Phase 4): canvas size presets. Picking a preset
@@ -698,6 +713,9 @@ export function TemplateEditor({ templateId, onClose, onChanged }) {
           onChangeElement={updateElement}
           backdropSrc={backdropSrc}
           productContext={productContext}
+          // v0.49.44: needed by the WYSIWYG truthful-preview fetch
+          // in EditorCanvas. Skipped when null (no backdrop chosen).
+          backdropProductId={backdropProductId}
           snapToGrid={snapToGrid}
           showBounds={showBounds}
         />

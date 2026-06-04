@@ -38,6 +38,9 @@ function emptyForm() {
     namingTokens: ['SKU', 'INDEX'],
     separator: '-',
     outputSubfolder: '',
+    // v0.49.42: per-profile {INDEX} formatting.
+    indexPad: 3,
+    indexPrefix: '',
   };
 }
 
@@ -71,6 +74,8 @@ function profileToForm(p) {
     namingTokens: patternToTokens(p.namingPattern || '{SKU}-{INDEX}'),
     separator: SEPARATORS.find((s) => s.value === inferredSep) ? inferredSep : '-',
     outputSubfolder: p.outputSubfolder ?? '',
+    indexPad: p.indexPad ?? 3,
+    indexPrefix: p.indexPrefix ?? '',
   };
 }
 
@@ -140,6 +145,8 @@ export function ProfileForm({ open, profile, onClose, onSubmit, onDelete }) {
         colorProfile: form.colorProfile,
         namingPattern: tokensToPattern(form.namingTokens.length ? form.namingTokens : ['SKU', 'INDEX'], form.separator),
         outputSubfolder: form.outputSubfolder.trim() || null,
+        indexPad: form.indexPad,
+        indexPrefix: form.indexPrefix,
       });
       onClose();
     } catch (err) {
@@ -156,7 +163,7 @@ export function ProfileForm({ open, profile, onClose, onSubmit, onDelete }) {
       case 'NAME':  return 'matte-tile';
       case 'COLOR': return 'matte-white';
       case 'BRAND': return 'bbc';
-      case 'INDEX': return '01';
+      case 'INDEX': return (form.indexPrefix || '') + String(1).padStart(Number(form.indexPad) || 3, '0');
       case 'DATE':  return new Date().toISOString().slice(0, 10);
       default:      return '';
     }
@@ -343,6 +350,37 @@ export function ProfileForm({ open, profile, onClose, onSubmit, onDelete }) {
                   {SEPARATORS.map((s) => <option key={s.label} value={s.value}>{s.label}</option>)}
                 </Select>
               </div>
+
+              {/* v0.49.42: per-profile {INDEX} format — digit width + optional
+                  prefix. Only shown when the {INDEX} token is actually used. */}
+              {form.namingTokens.includes('INDEX') ? (
+                <div className="naming-builder__index">
+                  <div className="naming-builder__index-field">
+                    <span>Index digits</span>
+                    <Select
+                      value={String(form.indexPad)}
+                      onChange={(e) => setForm((f) => ({ ...f, indexPad: Number(e.target.value) }))}
+                    >
+                      <option value="1">1 — 1, 2, 3</option>
+                      <option value="2">2 — 01, 02</option>
+                      <option value="3">3 — 001, 002</option>
+                      <option value="4">4 — 0001, 0002</option>
+                    </Select>
+                  </div>
+                  <div className="naming-builder__index-field">
+                    <span>Index prefix</span>
+                    <Input
+                      value={form.indexPrefix}
+                      placeholder="none (e.g. A → A001)"
+                      maxLength={8}
+                      onChange={(e) => setForm((f) => ({
+                        // Letters/digits only — mirrors the server-side sanitiser.
+                        ...f, indexPrefix: e.target.value.replace(/[^A-Za-z0-9]/g, ''),
+                      }))}
+                    />
+                  </div>
+                </div>
+              ) : null}
               <div className="naming-builder__preview">
                 <span className="naming-builder__preview-label">Preview</span>
                 <code>{previewExample}</code>

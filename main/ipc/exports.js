@@ -79,7 +79,7 @@ function register({ expose, assertEntityInActiveCompany, assertProductInActiveCo
     const brand = product.brandId ? brands.get(product.brandId) : null;
     const dateStr = new Date().toISOString().slice(0, 10);
     const base = exportRunner.buildFilename(profile.namingPattern || '{SKU}-{INDEX}', {
-      product, brand, imageIndex: imageIndex ?? 0, dateStr,
+      product, brand, imageIndex: imageIndex ?? 0, dateStr, profile,
     });
     const ext = profile.format === 'png' ? '.png' : profile.format === 'webp' ? '.webp' : '.jpg';
     return `${base}${ext}`;
