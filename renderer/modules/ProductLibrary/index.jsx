@@ -708,7 +708,18 @@ export function ProductLibrary() {
                       {
                         label: 'Destructive · overwrites originals',
                         items: [
-                          { label: 'Auto-crop / reframe', hint: 'Trim background + reframe to a uniform fill. Rewrites the source file in place.', onClick: () => setAutoCropOpen(true) },
+                          {
+                            // v0.49.45 — renamed from "Auto-crop / reframe"
+                            // because the side-panel per-image Reframe button
+                            // is the actual reframe tool (better controls).
+                            // This bulk action is the trim-edges-and-resize
+                            // automation; reframe is what the user does
+                            // manually per image. Clearer names: bulk = "Auto
+                            // crop", side panel = "Reframe".
+                            label: 'Auto crop',
+                            hint: 'Trim background edges and recompose to a uniform fill. For precise per-image reframe, open the side panel.',
+                            onClick: () => setAutoCropOpen(true),
+                          },
                           { label: 'Enhance',             hint: 'White-balance + auto-levels + saturation. Rewrites the source file in place.', onClick: () => setAutoEnhanceOpen(true) },
                           // v0.49.34: three focused tools instead of one combined modal.
                           { label: 'Convert format',      hint: 'Re-encode each image as JPEG, PNG, or WebP. Renames the file on disk when the extension changes.', onClick: () => setBulkConvertOpen(true) },

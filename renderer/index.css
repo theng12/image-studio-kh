@@ -4832,7 +4832,13 @@ body[data-role="photographer"] .image-tile__nav-btn { display: none !important; 
 .image-tile__set-main {
   position: absolute;
   top: 6px;
-  left: 6px;
+  /* v0.49.45 — shifted right so it doesn't sit underneath the v0.49.39
+     multi-select checkbox (which lives at left: 6px with z-index: 3).
+     Before this, the checkbox was geometrically AND z-order-on-top of
+     this button, so clicks aimed at "Set as main" hit the checkbox
+     instead. 34px = 22px checkbox + 6px gap, keeping both visible side
+     by side at the top-left. */
+  left: 34px;
   background: rgba(255,255,255,0.95);
   border: 1px solid var(--c-border-strong);
   color: var(--c-text);

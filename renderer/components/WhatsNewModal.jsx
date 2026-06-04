@@ -2,6 +2,16 @@ import { Modal } from './ui.jsx';
 
 const CHANGELOG = [
   {
+    version: '0.49.45',
+    date: '2026-06-04',
+    items: [
+      'HOTFIX — v0.49.44\'s "Append as main image" destination didn\'t actually promote to main when used from the **bulk** apply path. The single-product apply was fixed correctly, but the bulk-apply branch in `templates:applyBulk` uses different local variable names (`pid` instead of `product.id`) so the v0.49.44 `replace_all` edit missed it. Result: bulk users picked "Append as main image", saw the render appended, but it landed at the end of the list — not at position 0. Both single and bulk paths now share a `promotesToMain = (kind === replaceMain || kind === appendAsMain)` consolidation so they can\'t drift again.',
+      'FIX — Multi-select checkbox on each image tile was blocking the "Set as main" button geometrically. Both were absolutely positioned at `top: 6px; left: 6px` and the checkbox has `z-index: 3`, so clicks aimed at "Set as main" hit the checkbox instead. Shifted "Set as main" to `left: 34px` (22px checkbox + 6px gap) so the two sit side-by-side at the top-left of the tile, both clickable.',
+      'CHANGE — Bulk menu "Auto-crop / reframe" renamed to **"Auto crop"** since the side-panel per-image Reframe button is the actual precise reframe tool. The two had been doing similar things with different controls and the names were causing confusion. New mental model: bulk = "Auto crop" (trim edges, recompose to a uniform fill, runs across N products), side panel = "Reframe" (precise per-image control with the bg-color picker, shrink-within-frame, etc.). Hint text updated to point users to the side panel for precise reframe.',
+      'Verified: 100/100 tests pass. Build clean.',
+    ],
+  },
+  {
     version: '0.49.44',
     date: '2026-06-04',
     items: [

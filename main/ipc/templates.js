@@ -353,7 +353,16 @@ async function applyBulkInternal({ templateId, productIds, destination, companyI
           const { image } = await productImages.addFromBytes(pid, bytes, '.png', {
             originalFilepath: `overlay:${template.id}`,
           });
-          if (destination.kind === 'replaceMain') productImages.setMain(pid, image.filepath);
+          // v0.49.45 HOTFIX — the bulk path was still only checking
+          // `replaceMain` so the new `appendAsMain` (v0.49.44) silently
+          // skipped the setMain call. Result: user picks "Append as
+          // main image" in the bulk modal, expects position 0, gets
+          // position N (end of list). The single-product path was
+          // fixed in v0.49.44 but the bulk branch uses `pid` instead
+          // of `product.id` so the `replace_all` edit missed it.
+          // Same `promotesToMain` consolidation now used in both paths.
+          const promotesToMain = destination.kind === 'replaceMain' || destination.kind === 'appendAsMain';
+          if (promotesToMain) productImages.setMain(pid, image.filepath);
           products.recomputeProcessStatus(pid);
           products.touchUpdated(pid);
           done.push({ productId: pid, sku: product.sku, outputFilepath: image.filepath });
@@ -364,7 +373,7 @@ async function applyBulkInternal({ templateId, productIds, destination, companyI
           // matching evt.id === activeProductId. Without this the
           // bulk runner was emitting nothing per-row and the side
           // panel only refreshed when the user clicked off + back.
-          emitCatalogChange('images', destination.kind === 'replaceMain' ? 'setMain' : 'add', pid);
+          emitCatalogChange('images', promotesToMain ? 'setMain' : 'add', pid);
         } else if (destination.kind === 'saveToFolder') {
           await fs.promises.mkdir(destination.folder, { recursive: true });
           const base = `${slugify(product.sku || 'product', 'product')}-${slugify(template.name || 'overlay', 'overlay')}`;
