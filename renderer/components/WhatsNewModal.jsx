@@ -2,6 +2,18 @@ import { Modal } from './ui.jsx';
 
 const CHANGELOG = [
   {
+    version: '0.49.49',
+    date: '2026-06-07',
+    items: [
+      'NEW — **Incoterm-aware cost warnings** (this is the warning promised back in v0.49.46). When you add a cost component to a Purchase Order, the editor now warns if the PO\'s Incoterm already bakes that cost into the supplier\'s unit price — so you don\'t pay for it twice. Examples: adding a **freight** line to a **CFR/CNF** or **CIF** PO (the supplier already shipped it to port), or **insurance** on a **CIF** PO. The warning shows live as you pick the cost kind, and again in the PO\'s landed-cost summary. It\'s advisory, never blocking — a CFR PO might still legitimately carry a destination-side freight leg. **EXW** flags nothing (buyer pays everything); **FOB** gives a soft note on “inland” since that could be origin or destination haulage.',
+      'NEW — **Bulk import of logistics fields.** The Excel/CSV product importer now understands the carton + sourcing columns: Supplier SKU, HS code, Units per carton, Carton width/height/length (cm), and Weight per unit (kg). Map them like any other column (headers like “qty/ctn”, “ctn w”, “hs code” auto-detect), and they upsert by SKU with the same merge rules as the rest of the catalog. So you can bring an entire supplier packing list in at once instead of typing carton dims per product. The **Download sample** workbook now includes these columns + an Instructions row explaining each.',
+      'Why both — these were the last two items from the original costing plan. The Incoterm warning was explicitly promised in the v0.49.46 “What’s new” and hadn’t shipped; the bulk import closes the “enter carton data once” loop from the supplier side (import in bulk → it prefills PO lines → landed cost → back to the Library). The costing system is now feature-complete end to end.',
+      'Note — the **default supplier** field is still set per-product in the app (dropdown), not via CSV. Resolving a supplier by name from a spreadsheet risks creating bad references, so it stays a deliberate in-app choice; everything else on the logistics panel is bulk-importable.',
+      'Internal — `landedCost.incotermComponentWarnings(incoterm, components)` is a new pure function (8 unit tests covering EXW/FOB/CFR/CNF/CIF + case-insensitivity + unknown-incoterm). PO `getDetail` merges its output into the existing warnings array. Importer gained 7 fields in `PRODUCT_FIELDS` + auto-guess heuristics + numeric coercion; `bulkUpsert` UPSERT_FIELDS + insert record extended to match; sample-workbook generator updated.',
+      'Verified: tests pass (137 total). Build clean.',
+    ],
+  },
+  {
     version: '0.49.48',
     date: '2026-06-07',
     items: [

@@ -696,6 +696,9 @@ function bulkUpsert(companyId, rows, opts = {}) {
     'name', 'brandId', 'barcode', 'secondaryCode', 'categoryId',
     'subcategory', 'colorFinish', 'variant', 'unit', 'status',
     'description', 'priceRetail', 'priceWholesale',
+    // v0.49.49: logistics & sourcing — importable from a packing list.
+    'supplierSku', 'hsCode', 'cartonQty', 'cartonWCm', 'cartonHCm',
+    'cartonDCm', 'weightPerUnitKg',
   ];
   // Field is considered "supplied" by the import row when the key is
   // present at all (even if the value is empty string). Empty string vs
@@ -801,6 +804,14 @@ function bulkUpsert(companyId, rows, opts = {}) {
             description:   row.description   ?? null,
             priceRetail:   row.priceRetail   ?? null,
             priceWholesale: row.priceWholesale ?? null,
+            // v0.49.49: logistics & sourcing.
+            supplierSku:     row.supplierSku     ?? null,
+            hsCode:          row.hsCode          ?? null,
+            cartonQty:       row.cartonQty       ?? null,
+            cartonWCm:       row.cartonWCm       ?? null,
+            cartonHCm:       row.cartonHCm       ?? null,
+            cartonDCm:       row.cartonDCm       ?? null,
+            weightPerUnitKg: row.weightPerUnitKg ?? null,
           };
           if (dryRun) {
             // For previews, surface the non-default fields so the user

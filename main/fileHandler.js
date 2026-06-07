@@ -25,6 +25,12 @@ function writeProductSampleWorkbook(outputPath) {
     'Name', 'Category', 'Subcategory', 'Color/Finish',
     'Description', 'Unit', 'Variant', 'Retail price', 'Wholesale price',
     'Tags', 'Status',
+    // v0.49.49: logistics & sourcing — the carton + weight data off a
+    // supplier's packing list. These prefill Purchase Order lines and
+    // feed the landed-cost volume / weight allocation.
+    'Supplier SKU', 'HS code', 'Units per carton',
+    'Carton width (cm)', 'Carton height (cm)', 'Carton length (cm)',
+    'Weight per unit (kg)',
   ];
 
   const sampleRows = [
@@ -44,6 +50,13 @@ function writeProductSampleWorkbook(outputPath) {
       'Wholesale price': 9.2,
       Tags: 'matte, ceramic, indoor',
       Status: 'active',
+      'Supplier SKU': 'FAC-TILE-6060',
+      'HS code': '6907.21',
+      'Units per carton': 4,
+      'Carton width (cm)': 62,
+      'Carton height (cm)': 12,
+      'Carton length (cm)': 62,
+      'Weight per unit (kg)': 8.5,
     },
   ];
 
@@ -71,8 +84,16 @@ function writeProductSampleWorkbook(outputPath) {
     ['Wholesale price', 'Numeric. Optional.'],
     ['Tags', 'Comma-separated tags.'],
     ['Status', 'active / inactive / draft. Defaults to active.'],
+    ['Supplier SKU', 'Optional. The supplier / factory item code. Prefills onto Purchase Order lines.'],
+    ['HS code', 'Optional. Customs tariff code (e.g. 6907.21).'],
+    ['Units per carton', 'Optional, numeric. How many pieces ship in one carton. Used for container fill % + volume-based cost allocation.'],
+    ['Carton width (cm)', 'Optional, numeric. Outer carton width. Width × height × length = carton volume (CBM).'],
+    ['Carton height (cm)', 'Optional, numeric. Outer carton height.'],
+    ['Carton length (cm)', 'Optional, numeric. Outer carton length / depth. (Order of W/H/L does not change the volume.)'],
+    ['Weight per unit (kg)', 'Optional, numeric. Gross weight of ONE piece (not the carton). Used only for weight-based cost allocation.'],
     ['', ''],
     ['How updates work', 'Rows are matched by SKU. New SKUs are inserted; existing SKUs are updated. Blank cells leave the current data alone.'],
+    ['Logistics & cost', 'The Supplier SKU / HS / carton / weight columns prefill Purchase Order line items and drive the landed-cost calculator. Default supplier is set per-product in the app (not importable here).'],
     ['Images', 'Not imported via this sheet. Use Auto-match images… in the Library or attach images per product.'],
   ];
   XLSX.utils.book_append_sheet(

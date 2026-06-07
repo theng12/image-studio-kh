@@ -19,6 +19,19 @@ const PRODUCT_FIELDS = [
   { key: 'priceWholesale',label: 'Wholesale price' },
   { key: 'tags',          label: 'Tags (comma-separated)' },
   { key: 'status',        label: 'Status' },
+  // v0.49.49: logistics & sourcing — bulk-import the carton + weight data
+  // straight off a supplier's packing list so it prefills PO lines later.
+  // Supplier (by id) is intentionally NOT importable here — it's a foreign
+  // key the user sets per-product via the dropdown; a name column would
+  // need fuzzy resolution and risk bad references. The numeric carton /
+  // weight fields are the high-value bulk import.
+  { key: 'supplierSku',     label: 'Supplier SKU' },
+  { key: 'hsCode',          label: 'HS code' },
+  { key: 'cartonQty',       label: 'Units per carton' },
+  { key: 'cartonWCm',       label: 'Carton width (cm)' },
+  { key: 'cartonHCm',       label: 'Carton height (cm)' },
+  { key: 'cartonDCm',       label: 'Carton length/depth (cm)' },
+  { key: 'weightPerUnitKg', label: 'Weight per unit (kg)' },
 ];
 
 function autoGuess(header) {
@@ -28,6 +41,19 @@ function autoGuess(header) {
   if (h === 'name' || h === 'product' || h === 'product name') return 'name';
   if (h === 'brand') return 'brand';
   if (h === 'barcode' || h === 'bar code' || h === 'ean' || h === 'upc') return 'barcode';
+  // v0.49.49: logistics & sourcing. These come BEFORE the generic
+  // "supplier* → secondaryCode" rule so "supplier sku"/"supplier code"
+  // resolve to the dedicated field instead of the legacy alt-SKU column.
+  if (h === 'supplier sku' || h === 'supplier code' || h === 'factory code' || h === 'factory sku' || h === 'vendor sku' || h === 'vendor code') return 'supplierSku';
+  if (h === 'hs code' || h === 'hscode' || h === 'hs_code' || h === 'hs' || h === 'tariff' || h === 'tariff code' || h === 'hts') return 'hsCode';
+  if (h === 'carton qty' || h === 'qty/ctn' || h === 'qty per carton' || h === 'units per carton' || h === 'pcs/carton' || h === 'pcs/ctn' || h === 'pcs per carton' || h.includes('per carton') || h.includes('units/carton')) return 'cartonQty';
+  if ((h.includes('carton') || h.includes('ctn')) && (h.includes('width') || h === 'ctn w' || h.endsWith(' w'))) return 'cartonWCm';
+  if ((h.includes('carton') || h.includes('ctn')) && (h.includes('height') || h === 'ctn h' || h.endsWith(' h'))) return 'cartonHCm';
+  if ((h.includes('carton') || h.includes('ctn')) && (h.includes('length') || h.includes('depth') || h === 'ctn l' || h.endsWith(' l') || h.endsWith(' d'))) return 'cartonDCm';
+  // Per-unit weight only — avoid matching a bare "weight" / "gross weight"
+  // (usually carton GW, not per-unit) so we don't silently feed the wrong
+  // number into weight-based cost allocation.
+  if (h === 'unit weight' || h === 'weight per unit' || h === 'weight/pc' || h === 'weight per pc' || h === 'net weight per pc' || h.includes('weight per unit') || h.includes('weight/unit')) return 'weightPerUnitKg';
   if (h.startsWith('secondary') || h === 'alt sku' || h === 'alt code' || h.startsWith('supplier')) return 'secondaryCode';
   if (h === 'category') return 'category';
   if (h === 'subcategory' || h === 'sub-category') return 'subcategory';
@@ -166,7 +192,10 @@ export function ImportModal({ open, onClose }) {
           out.categoryId = await ensureCategoryId(raw);
         } else if (field === 'tags') {
           out.tags = String(raw).split(',').map((s) => s.trim()).filter(Boolean);
-        } else if (field === 'priceRetail' || field === 'priceWholesale') {
+        } else if (field === 'priceRetail' || field === 'priceWholesale'
+          // v0.49.49: numeric logistics fields coerce the same way.
+          || field === 'cartonQty' || field === 'cartonWCm' || field === 'cartonHCm'
+          || field === 'cartonDCm' || field === 'weightPerUnitKg') {
           out[field] = toNumber(raw);
         } else if (field === 'status') {
           const v = String(raw).trim().toLowerCase();

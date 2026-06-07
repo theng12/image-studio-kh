@@ -9521,6 +9521,17 @@ body[data-role="photographer"] .image-tile__nav-btn { display: none !important; 
   font-size: 12.5px;
 }
 
+/* v0.49.49: live Incoterm double-count notice inside the Add-cost modal. */
+.po-incoterm-note {
+  padding: 8px 12px;
+  border-radius: 6px;
+  background: rgba(217, 119, 6, 0.10);
+  border: 1px solid rgba(217, 119, 6, 0.35);
+  color: #92400e;
+  font-size: 12.5px;
+  line-height: 1.45;
+}
+
 /* Cost Calculator — two-column layout on wide screens, stack on narrow. */
 .costcalc__layout {
   display: grid;

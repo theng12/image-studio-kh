@@ -243,14 +243,76 @@ function realizedMargin(landedCostUsd, retailUsd) {
 
 function sum(arr) { return arr.reduce((a, b) => a + (Number(b) || 0), 0); }
 
+/**
+ * Which cost-component kinds an Incoterm already bakes into the unit
+ * price the supplier quoted. Adding a component of one of these kinds is
+ * (usually) double-counting — the buyer would pay for it twice.
+ *
+ *   EXW — ex-works: buyer pays EVERYTHING from the factory gate. Nothing
+ *         is included, so no component is a double-count.
+ *   FOB — free on board: seller covers origin-side costs up to loading at
+ *         the origin port (origin inland haulage + export clearance).
+ *         Sea freight, insurance, duty are the buyer's. We only flag
+ *         'inland' here, and gently — "inland" could mean destination
+ *         haulage, which IS the buyer's, so this is a soft notice.
+ *   CFR / CNF — cost & freight: seller covers freight to the destination
+ *         port. Adding a 'freight' component double-counts.
+ *   CIF — cost, insurance, freight: seller covers freight AND insurance.
+ *         Adding 'freight' or 'insurance' double-counts.
+ *
+ * The returned warnings are advisory — the calc never blocks. The user
+ * might legitimately add a destination-side freight leg on a CFR PO, so
+ * we phrase it as "may already be included", not "is wrong".
+ */
+const INCOTERM_INCLUDED = {
+  EXW: [],
+  FOB: ['inland'],
+  CFR: ['freight'],
+  CIF: ['freight', 'insurance'],
+};
+
+const INCOTERM_LABEL = {
+  EXW: 'EXW (ex-works)',
+  FOB: 'FOB (free on board)',
+  CFR: 'CFR / CNF (cost & freight)',
+  CIF: 'CIF (cost, insurance, freight)',
+};
+
+/**
+ * Given a PO's Incoterm + its cost components, return human-readable
+ * notices for any component whose kind the Incoterm likely already
+ * includes in the supplier's unit price. Returns string[] (possibly
+ * empty). Normalises the CNF alias to CFR.
+ */
+function incotermComponentWarnings(incoterm, components) {
+  const norm = String(incoterm || '').trim().toUpperCase().replace('CNF', 'CFR');
+  const included = INCOTERM_INCLUDED[norm];
+  if (!included || included.length === 0) return [];
+  const label = INCOTERM_LABEL[norm] || norm;
+  const warnings = [];
+  for (const c of components || []) {
+    const kind = String(c?.kind || '').trim().toLowerCase();
+    if (included.includes(kind)) {
+      const soft = norm === 'FOB'; // FOB 'inland' is genuinely ambiguous
+      warnings.push(
+        `This PO is ${label} — ${kind} ${soft ? 'at origin may already be' : 'is normally already'} ` +
+        `covered by the supplier's unit price. ` +
+        `Check the "${c.label || kind}" cost line${soft ? ' (if it\'s destination-side haulage, ignore this).' : ' so you don\'t double-count it.'}`,
+      );
+    }
+  }
+  return warnings;
+}
+
 module.exports = {
   calculateLanded,
   containerFillPct,
   suggestedRetail,
   realizedMargin,
+  incotermComponentWarnings,
   // exported for tests / advanced callers
   _internals: {
     cartonCbm, cartonsForLine, lineVolumeCbm, lineWeightKg, lineValueUsd,
-    allocateOne, CONTAINER_CBM,
+    allocateOne, CONTAINER_CBM, INCOTERM_INCLUDED,
   },
 };

@@ -192,7 +192,12 @@ function getDetail(id) {
 
   const fillPct = landedCost.containerFillPct(header.containerType, calc.header.totalVolumeCbm);
 
-  return { header, lines: linesWithCalc, components, calc: calc.header, warnings: calc.warnings, fillPct };
+  // v0.49.49: layer Incoterm-aware notices on top of the allocation-fallback
+  // warnings — e.g. a 'freight' cost on a CIF PO is likely double-counted.
+  const incotermWarnings = landedCost.incotermComponentWarnings(header.incoterm, components);
+  const warnings = [...calc.warnings, ...incotermWarnings];
+
+  return { header, lines: linesWithCalc, components, calc: calc.header, warnings, fillPct };
 }
 
 function create(input, userId = null) {

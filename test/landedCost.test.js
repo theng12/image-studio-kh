@@ -163,6 +163,58 @@ test('round-trip — suggestedRetail then realizedMargin matches input', () => {
   }
 });
 
+test('incotermComponentWarnings — CIF flags freight + insurance', () => {
+  const comps = [
+    { kind: 'freight', label: 'Sea freight' },
+    { kind: 'insurance', label: 'Marine insurance' },
+    { kind: 'duty', label: 'Import duty' },
+  ];
+  const w = lc.incotermComponentWarnings('CIF', comps);
+  assert.equal(w.length, 2); // freight + insurance flagged; duty is legit
+  assert.ok(w.some((s) => s.toLowerCase().includes('freight')));
+  assert.ok(w.some((s) => s.toLowerCase().includes('insurance')));
+});
+
+test('incotermComponentWarnings — CFR flags freight only', () => {
+  const comps = [
+    { kind: 'freight', label: 'Freight' },
+    { kind: 'insurance', label: 'Insurance' },
+  ];
+  const w = lc.incotermComponentWarnings('CFR', comps);
+  assert.equal(w.length, 1);
+  assert.ok(w[0].toLowerCase().includes('freight'));
+});
+
+test('incotermComponentWarnings — CNF alias behaves like CFR', () => {
+  const w = lc.incotermComponentWarnings('CNF', [{ kind: 'freight' }]);
+  assert.equal(w.length, 1);
+  // The label should normalise to CFR.
+  assert.ok(w[0].includes('CFR'));
+});
+
+test('incotermComponentWarnings — EXW flags nothing (buyer pays all)', () => {
+  const comps = [{ kind: 'freight' }, { kind: 'insurance' }, { kind: 'inland' }, { kind: 'duty' }];
+  assert.deepEqual(lc.incotermComponentWarnings('EXW', comps), []);
+});
+
+test('incotermComponentWarnings — FOB flags inland (soft) but not freight', () => {
+  const comps = [{ kind: 'freight' }, { kind: 'inland' }];
+  const w = lc.incotermComponentWarnings('FOB', comps);
+  assert.equal(w.length, 1);
+  assert.ok(w[0].toLowerCase().includes('inland'));
+});
+
+test('incotermComponentWarnings — empty/unknown incoterm → no warnings', () => {
+  assert.deepEqual(lc.incotermComponentWarnings('', [{ kind: 'freight' }]), []);
+  assert.deepEqual(lc.incotermComponentWarnings(null, [{ kind: 'freight' }]), []);
+  assert.deepEqual(lc.incotermComponentWarnings('WEIRD', [{ kind: 'freight' }]), []);
+});
+
+test('incotermComponentWarnings — case-insensitive kind match', () => {
+  const w = lc.incotermComponentWarnings('cif', [{ kind: 'FREIGHT' }]);
+  assert.equal(w.length, 1);
+});
+
 test('calculateLanded — degenerate: zero-priced lines do not crash on by_value', () => {
   // All lines at $0 → by_value can't allocate → flat fallback.
   const freeLineA = { ...LINE_A, unitPriceUsd: 0 };

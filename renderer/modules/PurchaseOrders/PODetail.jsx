@@ -479,6 +479,7 @@ export function PODetail({ poId, onBack }) {
         <ComponentModal
           mode="create"
           currency={header.currency}
+          incoterm={header.incoterm}
           onCancel={() => setAddingComponent(false)}
           onSave={addComponent}
         />
@@ -487,6 +488,7 @@ export function PODetail({ poId, onBack }) {
         <ComponentModal
           mode="edit"
           currency={header.currency}
+          incoterm={header.incoterm}
           component={editingComponent}
           onCancel={() => setEditingComponent(null)}
           onSave={(patch) => updateComponent(editingComponent.id, patch)}
@@ -625,13 +627,29 @@ function LineModal({ mode, currency, line, products, onCancel, onSave }) {
   );
 }
 
-function ComponentModal({ mode, currency, component, onCancel, onSave }) {
+// v0.49.49: which component kinds an Incoterm already includes in the
+// supplier's unit price (mirrors main/util/landedCost.js INCOTERM_INCLUDED).
+// Used for a live warning as the user picks a kind, before they even save.
+const INCOTERM_INCLUDES = {
+  EXW: [],
+  FOB: ['inland'],
+  CFR: ['freight'],
+  CNF: ['freight'],
+  CIF: ['freight', 'insurance'],
+};
+
+function ComponentModal({ mode, currency, incoterm, component, onCancel, onSave }) {
   const initial = component || {};
   const [kind, setKind]               = useState(initial.kind || 'freight');
   const [label, setLabel]             = useState(initial.label || '');
   const [amount, setAmount]           = useState(initial.amountSupplierCurrency ?? '');
   const [allocationBasis, setBasis]   = useState(initial.allocationBasis || 'by_value');
   const [notes, setNotes]             = useState(initial.notes || '');
+
+  // Live Incoterm double-count notice for the currently-selected kind.
+  const incotermNorm = String(incoterm || '').toUpperCase().replace('CNF', 'CFR');
+  const includedKinds = INCOTERM_INCLUDES[incotermNorm] || [];
+  const kindConflicts = includedKinds.includes(String(kind).toLowerCase());
 
   function submit() {
     onSave({
@@ -662,6 +680,16 @@ function ComponentModal({ mode, currency, component, onCancel, onSave }) {
               <span className="field__label">Amount ({currency}) *</span>
               <Input type="number" min="0" step="0.01" value={amount} onChange={(e) => setAmount(e.target.value)} />
             </label>
+            {kindConflicts && (
+              <div className="field field--full po-incoterm-note">
+                Heads up — this PO is <strong>{incotermNorm}</strong>, which normally already
+                includes <strong>{String(kind).toLowerCase()}</strong> in the supplier&apos;s
+                unit price.{' '}
+                {incotermNorm === 'FOB'
+                  ? 'If this is destination-side inland haulage, it’s fine to add.'
+                  : 'Adding it here may double-count the cost.'}
+              </div>
+            )}
             <label className="field field--full">
               <span className="field__label">Label / description</span>
               <Input value={label} onChange={(e) => setLabel(e.target.value)} placeholder="e.g. Sea freight Shenzhen→Sihanoukville" />
