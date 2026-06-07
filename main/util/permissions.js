@@ -67,6 +67,13 @@ const READ_CHANNELS = new Set([
   // (e.g. a cost field shown on a product page). Writes stay
   // editor-or-admin via the fall-through below.
   'suppliers:list', 'suppliers:get',
+  // v0.49.47: PO + product-cost reads. Same logic — the UI hides the
+  // OPERATIONS section for non-editors, but a stray Library Cost column
+  // call from a viewer shouldn't 403.
+  'pos:list', 'pos:get', 'pos:getDetail',
+  'pos:listForSupplier', 'pos:listForProduct', 'pos:getProductCost',
+  // Pure math — no DB access, no side effects, safe for every role.
+  'costing:suggestedRetail', 'costing:realizedMargin', 'costing:containerFillPct',
 ]);
 
 // Photographer can additionally ADD photos and use the basic file pickers

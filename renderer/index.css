@@ -9402,3 +9402,170 @@ body[data-role="photographer"] .image-tile__nav-btn { display: none !important; 
   text-transform: uppercase;
   letter-spacing: 0.04em;
 }
+
+/* ───────────────────────────────────────────────────────────────────
+ *  v0.49.47 — Purchase Orders + Cost Calculator (OPERATIONS Phase 2-4)
+ *  Reuses the suppliers-table look for the PO list so the OPERATIONS
+ *  section has a consistent visual rhythm. The PO detail page adds
+ *  stacked panels for header / lines / cost components / summary.
+ * ─────────────────────────────────────────────────────────────────── */
+
+.page--pos .pos-toolbar,
+.page--po-detail .pos-toolbar {
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+  padding: var(--s-3) var(--s-5);
+  border-bottom: 1px solid var(--c-border);
+}
+.pos-table-wrap {
+  overflow-x: auto;
+  padding: 0 var(--s-5);
+}
+.pos-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+.pos-table thead th {
+  text-align: left;
+  font-weight: 500;
+  color: var(--c-text-muted, #71717a);
+  padding: 10px 10px;
+  border-bottom: 1px solid var(--c-border);
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  font-size: 11px;
+}
+.pos-table tbody td {
+  padding: 10px 10px;
+  border-bottom: 1px solid var(--c-border);
+  vertical-align: middle;
+}
+.pos-table th.ralign, .pos-table td.ralign { text-align: right; }
+.pos-row { transition: background 80ms; }
+.pos-row:hover { background: var(--c-bg-hover, rgba(0,0,0,0.04)); }
+
+/* PO detail — stacked sections with a soft surround. */
+.po-section {
+  margin: var(--s-4) var(--s-5);
+  padding: var(--s-4);
+  border: 1px solid var(--c-border);
+  border-radius: 8px;
+  background: var(--c-surface, rgba(0,0,0,0.015));
+}
+.po-section__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s-3);
+  margin-bottom: var(--s-3);
+}
+.po-section__title {
+  margin: 0 0 var(--s-3) 0;
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: var(--c-text-muted, #71717a);
+}
+.po-section__header .po-section__title { margin-bottom: 0; }
+
+/* Summary stat grid — totals at a glance. */
+.po-summary__grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: var(--s-3);
+}
+.po-stat {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: var(--s-3);
+  border: 1px solid var(--c-border);
+  border-radius: 6px;
+  background: var(--c-bg, #fff);
+}
+.po-stat--emphasis {
+  border-color: var(--c-accent, #0a84ff);
+  box-shadow: 0 0 0 1px var(--c-accent, #0a84ff) inset;
+}
+.po-stat__label {
+  font-size: 11.5px;
+  color: var(--c-text-muted, #71717a);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.po-stat__value {
+  font-size: 18px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.po-stat__value--emerald { color: #059669; }
+.po-stat__value--amber   { color: #d97706; }
+.po-stat__value--rose    { color: #e11d48; }
+.po-stat__value--sky     { color: #0284c7; }
+
+.po-warnings {
+  margin-top: var(--s-3);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.po-warning {
+  padding: 8px 12px;
+  border-radius: 6px;
+  background: rgba(217, 119, 6, 0.10);
+  border: 1px solid rgba(217, 119, 6, 0.35);
+  color: #92400e;
+  font-size: 12.5px;
+}
+
+/* Cost Calculator — two-column layout on wide screens, stack on narrow. */
+.costcalc__layout {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(360px, 1fr));
+  gap: var(--s-3);
+  padding: var(--s-4) var(--s-5);
+}
+.costcalc__history {
+  margin-top: var(--s-3);
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: var(--s-2);
+}
+.costcalc__summary {
+  margin-top: var(--s-3);
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: var(--s-2);
+}
+.costcalc__whatif {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: var(--s-2);
+  margin-top: var(--s-3);
+}
+.costcalc__chip {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  padding: 10px 12px;
+  border: 1px solid var(--c-border);
+  border-radius: 6px;
+  background: var(--c-bg, #fff);
+  font-size: 12px;
+  color: var(--c-text-muted, #71717a);
+  cursor: pointer;
+  transition: background 80ms, border-color 80ms;
+}
+.costcalc__chip:hover {
+  background: var(--c-bg-hover, rgba(0,0,0,0.04));
+  border-color: var(--c-accent, #0a84ff);
+}
+.costcalc__chip strong {
+  font-size: 15px;
+  color: var(--c-text);
+  font-variant-numeric: tabular-nums;
+}

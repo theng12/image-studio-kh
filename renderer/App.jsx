@@ -44,9 +44,18 @@ import { Settings } from './modules/Settings/index.jsx';
 import { Support } from './modules/Support/index.jsx';
 // v0.49.46: Suppliers — Phase 1 of the costing system. Eagerly imported
 // because it's tiny (a single table + a modal form) and pre-loading is
-// cheap. POs (v0.49.47) and Cost Calculator (v0.49.48) will likely lazy-
-// split to stay off the boot path.
+// cheap.
 import { Suppliers } from './modules/Suppliers/index.jsx';
+// v0.49.47: Purchase Orders + Cost Calculator — Phases 2-4 of the
+// costing system. Lazy-split (PO detail page + line editor pull in
+// enough chrome that they earn a chunk; Cost Calculator is small but
+// no reason to pull it onto the boot path).
+const PurchaseOrders = lazy(() =>
+  import('./modules/PurchaseOrders/index.jsx').then((m) => ({ default: m.PurchaseOrders })),
+);
+const CostCalculator = lazy(() =>
+  import('./modules/CostCalculator/index.jsx').then((m) => ({ default: m.CostCalculator })),
+);
 
 const ImageWorkspace = lazy(() =>
   import('./modules/ImageWorkspace/index.jsx').then((m) => ({ default: m.ImageWorkspace })),
@@ -68,7 +77,9 @@ const PAGES = {
   dashboard: Dashboard,
   company:   Companies,
   brands:    Brands,
-  suppliers: Suppliers,
+  suppliers:      Suppliers,
+  purchaseorders: PurchaseOrders,
+  costcalc:       CostCalculator,
   library:   ProductLibrary,
   workspace: ImageWorkspace,
   aistudio:  AIStudio,

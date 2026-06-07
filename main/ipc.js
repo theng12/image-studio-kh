@@ -39,6 +39,7 @@ const auditDomain      = require('./ipc/audit');         // v0.22.6: history fee
 const serverBundleDom  = require('./ipc/serverBundle');  // v0.26.32: export/import server bundle
 const backupsDomain    = require('./ipc/backups');       // v0.49.31: local backup/restore
 const suppliersDomain  = require('./ipc/suppliers');     // v0.49.46: OPERATIONS — Phase 1
+const purchaseOrdersDomain = require('./ipc/purchaseOrders'); // v0.49.47: OPERATIONS — Phase 2+3+4
 
 function registerIpc(_ctx) {
   const helpers = {
@@ -67,6 +68,7 @@ function registerIpc(_ctx) {
   serverBundleDom.register(helpers);
   backupsDomain.register(helpers);
   suppliersDomain.register(helpers);
+  purchaseOrdersDomain.register(helpers);   // v0.49.47
 }
 
 module.exports = { registerIpc };

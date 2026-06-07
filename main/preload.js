@@ -265,6 +265,39 @@ contextBridge.exposeInMainWorld('api', {
     unarchive: (id)                 => invoke('suppliers:unarchive', id),
     remove:    (id)                 => invoke('suppliers:remove', id),
   },
+  /** v0.49.47: OPERATIONS — Purchase Orders + landed cost + costing helpers.
+   *  PO header + lines + cost components live in a single domain. Reads,
+   *  CRUD, and pure math helpers all use the `pos:` / `costing:` channels. */
+  purchaseOrders: {
+    // Reads
+    list:             (companyId, filters)        => invoke('pos:list', { companyId, filters }),
+    get:              (id)                        => invoke('pos:get', id),
+    getDetail:        (id)                        => invoke('pos:getDetail', id),
+    listForSupplier:  (supplierId)                => invoke('pos:listForSupplier', supplierId),
+    listForProduct:   (productId)                 => invoke('pos:listForProduct', productId),
+    getProductCost:   (productId)                 => invoke('pos:getProductCost', productId),
+    // Header CRUD
+    create:           (input)                     => invoke('pos:create', input),
+    update:           (id, patch)                 => invoke('pos:update', { id, patch }),
+    setStatus:        (id, status)                => invoke('pos:setStatus', { id, status }),
+    remove:           (id)                        => invoke('pos:remove', id),
+    // Lines
+    addLine:          (poId, input)               => invoke('pos:addLine', { poId, input }),
+    updateLine:       (lineId, patch)             => invoke('pos:updateLine', { lineId, patch }),
+    removeLine:       (lineId)                    => invoke('pos:removeLine', lineId),
+    // Cost components
+    addComponent:     (poId, input)               => invoke('pos:addComponent', { poId, input }),
+    updateComponent:  (componentId, patch)        => invoke('pos:updateComponent', { componentId, patch }),
+    removeComponent:  (componentId)               => invoke('pos:removeComponent', componentId),
+  },
+  /** v0.49.47: pure-math costing helpers — suggested retail from a target
+   *  margin, realized margin from a retail price, container fill %. Used
+   *  by the Cost Calculator + Library Cost column. */
+  costing: {
+    suggestedRetail:  (landedCostUsd, targetMarginPct) => invoke('costing:suggestedRetail', { landedCostUsd, targetMarginPct }),
+    realizedMargin:   (landedCostUsd, retailUsd)       => invoke('costing:realizedMargin',  { landedCostUsd, retailUsd }),
+    containerFillPct: (containerType, totalVolumeCbm)  => invoke('costing:containerFillPct',{ containerType, totalVolumeCbm }),
+  },
   watermarks: {
     upload:          (sourcePath)              => invoke('watermarks:upload', { sourcePath }),
     uploadFromBytes: (bytes, ext, name)        => invoke('watermarks:uploadFromBytes', { bytes, ext, name }),

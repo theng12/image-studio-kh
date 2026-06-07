@@ -187,6 +187,38 @@ function initDb(dataDir) {
   addColumnIfMissing(db, 'export_profiles', 'index_pad', 'INTEGER');
   addColumnIfMissing(db, 'export_profiles', 'index_prefix', 'TEXT');
 
+  /* v0.49.47: PO + product carton extensions for container utilization
+     and by-volume / by-weight cost allocation.
+     - po_lines: carton qty + outer dims (cm) + per-unit weight (kg).
+       Defaulted from product master at line creation, overridable per PO.
+     - purchase_orders: cached totals (re-summed on save) so the list
+       view doesn't have to re-aggregate every render.
+     - products: carton master fields. Set once when you import the SKU
+       from the supplier; the PO form pre-fills from these. Optional —
+       leaving them NULL means by_volume / by_weight allocations on a
+       PO that includes the SKU fall back to by_value. */
+  addColumnIfMissing(db, 'po_lines', 'carton_qty',         'INTEGER');
+  addColumnIfMissing(db, 'po_lines', 'carton_w_cm',        'REAL');
+  addColumnIfMissing(db, 'po_lines', 'carton_h_cm',        'REAL');
+  addColumnIfMissing(db, 'po_lines', 'carton_d_cm',        'REAL');
+  addColumnIfMissing(db, 'po_lines', 'weight_per_unit_kg', 'REAL');
+
+  addColumnIfMissing(db, 'purchase_orders', 'total_value_supplier', 'REAL');
+  addColumnIfMissing(db, 'purchase_orders', 'total_value_usd',      'REAL');
+  addColumnIfMissing(db, 'purchase_orders', 'total_volume_cbm',     'REAL');
+  addColumnIfMissing(db, 'purchase_orders', 'total_weight_kg',      'REAL');
+  addColumnIfMissing(db, 'purchase_orders', 'total_components_usd', 'REAL');
+  addColumnIfMissing(db, 'purchase_orders', 'lines_count',          'INTEGER');
+
+  addColumnIfMissing(db, 'products', 'carton_qty',         'INTEGER');
+  addColumnIfMissing(db, 'products', 'carton_w_cm',        'REAL');
+  addColumnIfMissing(db, 'products', 'carton_h_cm',        'REAL');
+  addColumnIfMissing(db, 'products', 'carton_d_cm',        'REAL');
+  addColumnIfMissing(db, 'products', 'weight_per_unit_kg', 'REAL');
+  addColumnIfMissing(db, 'products', 'hs_code',            'TEXT');
+  addColumnIfMissing(db, 'products', 'supplier_id',        'TEXT');
+  addColumnIfMissing(db, 'products', 'supplier_sku',       'TEXT');
+
   /* v0.28.0: image_merge_ops — the undo log for near-duplicate merges.
      Each merge batch records full snapshots of the removed image rows
      (in removed_json) plus where their files were quarantined, so a merge

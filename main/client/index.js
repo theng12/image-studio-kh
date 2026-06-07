@@ -654,6 +654,16 @@ const PROXIED_CHANNELS = [
   // POs and cost components added in v0.49.47.
   'suppliers:list','suppliers:get','suppliers:create','suppliers:update',
   'suppliers:archive','suppliers:unarchive','suppliers:remove',
+  // v0.49.47: OPERATIONS — Purchase Orders + landed cost. All channels
+  // operate on the shared catalog DB (no local filesystem), safe to RPC.
+  'pos:list','pos:get','pos:getDetail','pos:listForSupplier','pos:listForProduct','pos:getProductCost',
+  'pos:create','pos:update','pos:setStatus','pos:remove',
+  'pos:addLine','pos:updateLine','pos:removeLine',
+  'pos:addComponent','pos:updateComponent','pos:removeComponent',
+  // Pure math — could run client-side, but proxying keeps the formula
+  // logic centralised + lets us patch it server-side without re-shipping
+  // the client.
+  'costing:suggestedRetail','costing:realizedMargin','costing:containerFillPct',
   'ai:createPrompt','ai:updatePrompt','ai:removePrompt',
   'ai:queueTask','ai:repairTask','ai:queueFreshTask','ai:cancelTask','ai:removeTask',
   'ai:favoriteGallery','ai:removeGallery','ai:promoteGalleryToProduct',

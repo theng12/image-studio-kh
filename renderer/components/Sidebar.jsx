@@ -59,15 +59,17 @@ const NAV = [
     ],
   },
   {
-    // v0.49.46: OPERATIONS section. Phase 1 only ships Suppliers; POs +
-    // Cost Calculator land in v0.49.47 and v0.49.48 respectively. Hidden
-    // for viewer / photographer roles because cost data is the kind of
-    // thing they shouldn't see — the lowest role with access is editor.
-    // The whole section is dropped if every item inside it is gated out
-    // (see Sidebar render filter).
+    // v0.49.46: OPERATIONS section. v0.49.46 shipped Suppliers; v0.49.47
+    // adds Purchase Orders + Cost Calculator. Hidden for viewer /
+    // photographer roles because cost data is the kind of thing they
+    // shouldn't see — the lowest role with access is editor. The whole
+    // section is dropped if every item inside it is gated out (see
+    // Sidebar render filter).
     label: 'Operations',
     items: [
-      { id: 'suppliers', name: 'Suppliers', icon: IconSupplier, shortcut: '8', roleMin: 'editor' },
+      { id: 'suppliers',      name: 'Suppliers',       icon: IconSupplier, shortcut: '8', roleMin: 'editor' },
+      { id: 'purchaseorders', name: 'Purchase Orders', icon: IconPo,       shortcut: '9', roleMin: 'editor' },
+      { id: 'costcalc',       name: 'Cost Calculator', icon: IconCostCalc,                roleMin: 'editor' },
     ],
   },
   {
@@ -657,6 +659,32 @@ function IconSupplier({ className }) {
       <rect x="5" y="3" width="5" height="3" rx="0.5" stroke="currentColor" strokeWidth="1.4" />
       <rect x="3" y="9" width="4" height="3.5" rx="0.5" stroke="currentColor" strokeWidth="1.4" />
       <rect x="10" y="9" width="5" height="3.5" rx="0.5" stroke="currentColor" strokeWidth="1.4" />
+    </svg>
+  );
+}
+
+// v0.49.47: clipboard with check — Purchase Orders. Reads as
+// "documented order" without colliding with Library's grid or
+// History's clock.
+function IconPo({ className }) {
+  return (
+    <svg className={className} width="18" height="18" viewBox="0 0 18 18" fill="none">
+      <rect x="3.5" y="2.5" width="11" height="13" rx="1.5" stroke="currentColor" strokeWidth="1.4" />
+      <rect x="6" y="1.5" width="6" height="2.5" rx="0.5" stroke="currentColor" strokeWidth="1.4" fill="none" />
+      <path d="M6 9.5l2 2 4-4" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+// v0.49.47: percentage/calc glyph — Cost Calculator. The "%" reads
+// as margin/pricing; the surrounding rect echoes a calculator body.
+function IconCostCalc({ className }) {
+  return (
+    <svg className={className} width="18" height="18" viewBox="0 0 18 18" fill="none">
+      <rect x="3" y="2.5" width="12" height="13" rx="1.5" stroke="currentColor" strokeWidth="1.4" />
+      <circle cx="7" cy="7" r="1" fill="currentColor" />
+      <circle cx="11" cy="11" r="1" fill="currentColor" />
+      <path d="M6.5 11.5l5-5" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
     </svg>
   );
 }
