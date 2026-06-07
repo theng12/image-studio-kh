@@ -32,3 +32,4 @@ data
 # at the repo root). Keep the .claude/ directory itself trackable so we
 # can commit non-local settings later without un-ignoring the whole tree.
 .claude/settings.local.json
+.claude/scheduled_tasks.lock

@@ -657,6 +657,7 @@ const PROXIED_CHANNELS = [
   // v0.49.47: OPERATIONS — Purchase Orders + landed cost. All channels
   // operate on the shared catalog DB (no local filesystem), safe to RPC.
   'pos:list','pos:get','pos:getDetail','pos:listForSupplier','pos:listForProduct','pos:getProductCost',
+  'pos:listProductCosts','pos:supplierSpendRollup',
   'pos:create','pos:update','pos:setStatus','pos:remove',
   'pos:addLine','pos:updateLine','pos:removeLine',
   'pos:addComponent','pos:updateComponent','pos:removeComponent',

@@ -37,6 +37,15 @@ function rowToProduct(row) {
     description: row.description,
     priceRetail: row.price_retail,
     priceWholesale: row.price_wholesale,
+    // v0.49.47/48: logistics & sourcing — feed PO line prefills + landed cost.
+    supplierId: row.supplier_id ?? null,
+    supplierSku: row.supplier_sku ?? null,
+    hsCode: row.hs_code ?? null,
+    cartonQty: row.carton_qty ?? null,
+    cartonWCm: row.carton_w_cm ?? null,
+    cartonHCm: row.carton_h_cm ?? null,
+    cartonDCm: row.carton_d_cm ?? null,
+    weightPerUnitKg: row.weight_per_unit_kg ?? null,
     processStatus: row.process_status,
     // Coerce to Number to guard against BigInt-shaped counts from
     // better-sqlite3 on certain builds — strict equality `BigInt(0) === 0`
@@ -214,11 +223,15 @@ function create(input) {
         id, company_id, sku, name, brand_id, barcode, secondary_code,
         category_id, subcategory, color_finish, variant, unit,
         status, tags, description, price_retail, price_wholesale,
+        supplier_id, supplier_sku, hs_code, carton_qty,
+        carton_w_cm, carton_h_cm, carton_d_cm, weight_per_unit_kg,
         process_status, created_at, updated_at, updated_by_user_id
       ) VALUES (
         @id, @companyId, @sku, @name, @brandId, @barcode, @secondaryCode,
         @categoryId, @subcategory, @colorFinish, @variant, @unit,
         @status, @tags, @description, @priceRetail, @priceWholesale,
+        @supplierId, @supplierSku, @hsCode, @cartonQty,
+        @cartonWCm, @cartonHCm, @cartonDCm, @weightPerUnitKg,
         @processStatus, @createdAt, @updatedAt, @updatedByUserId
       )`,
     )
@@ -240,6 +253,15 @@ function create(input) {
       description: input.description ?? null,
       priceRetail: input.priceRetail ?? null,
       priceWholesale: input.priceWholesale ?? null,
+      // v0.49.48: logistics & sourcing.
+      supplierId: input.supplierId ?? null,
+      supplierSku: input.supplierSku ?? null,
+      hsCode: input.hsCode ?? null,
+      cartonQty: input.cartonQty ?? null,
+      cartonWCm: input.cartonWCm ?? null,
+      cartonHCm: input.cartonHCm ?? null,
+      cartonDCm: input.cartonDCm ?? null,
+      weightPerUnitKg: input.weightPerUnitKg ?? null,
       processStatus: input.processStatus ?? 'unprocessed',
       createdAt: ts,
       updatedAt: ts,
@@ -281,6 +303,15 @@ const UPDATABLE = {
   description: { col: 'description' },
   priceRetail: { col: 'price_retail' },
   priceWholesale: { col: 'price_wholesale' },
+  // v0.49.48: logistics & sourcing.
+  supplierId: { col: 'supplier_id' },
+  supplierSku: { col: 'supplier_sku' },
+  hsCode: { col: 'hs_code' },
+  cartonQty: { col: 'carton_qty' },
+  cartonWCm: { col: 'carton_w_cm' },
+  cartonHCm: { col: 'carton_h_cm' },
+  cartonDCm: { col: 'carton_d_cm' },
+  weightPerUnitKg: { col: 'weight_per_unit_kg' },
   processStatus: { col: 'process_status' },
 };
 
@@ -869,6 +900,15 @@ async function duplicate(id, { includeImages = true } = {}) {
     description: original.description,
     priceRetail: original.priceRetail,
     priceWholesale: original.priceWholesale,
+    // v0.49.48: carry logistics & sourcing defaults to the duplicate.
+    supplierId: original.supplierId,
+    supplierSku: original.supplierSku,
+    hsCode: original.hsCode,
+    cartonQty: original.cartonQty,
+    cartonWCm: original.cartonWCm,
+    cartonHCm: original.cartonHCm,
+    cartonDCm: original.cartonDCm,
+    weightPerUnitKg: original.weightPerUnitKg,
     processStatus: 'unprocessed',
   });
 

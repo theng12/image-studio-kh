@@ -259,6 +259,14 @@ export function ProductLibrary() {
     setVisibleCols(next);
   }
 
+  // v0.49.48: landed-cost map for the Cost column. Keyed by productId →
+  // { latestLandedCostUsd, latestPoId, ... }. Fetched in one bulk call,
+  // only when the Cost column is actually visible (skip the query
+  // otherwise). Re-fetched when the product set changes, since a PO
+  // received elsewhere updates these numbers.
+  const [productCosts, setProductCosts] = useState(() => new Map());
+  const costColumnVisible = visibleCols.has('cost');
+
   /**
    * v0.22.0: bulk delete with a clear danger confirm. Same
    * cascade behavior as single-row delete — DB rows go via the
@@ -352,6 +360,27 @@ export function ProductLibrary() {
 
   const brandsById = useMemo(() => new Map(brands.map((b) => [b.id, b])), [brands]);
   const categoriesById = useMemo(() => new Map(categories.map((c) => [c.id, c])), [categories]);
+
+  // v0.49.48: pull the bulk landed-cost map for the Cost column. Gated on
+  // the column being visible + a company being active. `products.length`
+  // in the deps means it refreshes after imports / deletes; a PO received
+  // on another Mac won't auto-push here, but switching modules or toggling
+  // the column re-fetches, which is enough for a cost-reference column.
+  useEffect(() => {
+    if (!activeCompanyId || !costColumnVisible) return;
+    let cancelled = false;
+    window.api.purchaseOrders.listProductCosts(activeCompanyId)
+      .then((list) => {
+        if (cancelled) return;
+        const map = new Map();
+        for (const c of (Array.isArray(list) ? list : [])) map.set(c.productId, c);
+        setProductCosts(map);
+      })
+      .catch(() => { if (!cancelled) setProductCosts(new Map()); });
+    return () => { cancelled = true; };
+  }, [activeCompanyId, costColumnVisible, products.length]);
+
+  const openPurchaseOrder = useAppStore((s) => s.openPurchaseOrder);
 
   // Client-side hasImages filter + sort applied to the SQL result. This way
   // the SQL stays simple and toggling a sort header doesn't roundtrip to
@@ -753,6 +782,8 @@ export function ProductLibrary() {
                   onToggleSelected={toggleSelected}
                   onToggleAllVisible={(on) => setManySelected(visible.map((p) => p.id), on)}
                   visibleCols={visibleCols}
+                  productCosts={productCosts}
+                  onOpenCost={(poId) => { if (poId) openPurchaseOrder(poId); }}
                 />
               ) : (
                 <GridView

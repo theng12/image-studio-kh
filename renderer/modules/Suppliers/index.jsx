@@ -42,6 +42,8 @@ const EMPTY_FORM = {
 export function Suppliers() {
   const activeCompanyId = useAppStore((s) => s.activeCompanyId);
   const addToast = useAppStore((s) => s.addToast);
+  // v0.49.48: jump to the PO list filtered by this supplier.
+  const openPurchaseOrdersForSupplier = useAppStore((s) => s.openPurchaseOrdersForSupplier);
 
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -50,6 +52,17 @@ export function Suppliers() {
   const [editing, setEditing] = useState(null); // null = closed, 'new' = create, object = edit
   const [page, setPage] = useState(0);
   const [pageSize, setPageSize] = useState(50);
+  // v0.49.48: per-supplier PO spend rollup, keyed by supplierId →
+  // { poCount, receivedCount, totalSpendUsd, lastOrderedAt }. Fetched once
+  // per company; refreshed when the supplier list reloads.
+  const [spend, setSpend] = useState({});
+
+  useEffect(() => {
+    if (!activeCompanyId) { setSpend({}); return; }
+    window.api.purchaseOrders.supplierSpendRollup(activeCompanyId)
+      .then((m) => setSpend(m && typeof m === 'object' ? m : {}))
+      .catch(() => setSpend({}));
+  }, [activeCompanyId, rows.length]);
 
   // Fetch whenever the company / status filter / search changes. The
   // search runs server-side (LIKE on name + country), so debounce by
@@ -226,6 +239,7 @@ export function Suppliers() {
                   <th>Currency</th>
                   <th>Default Incoterm</th>
                   <th>Contact</th>
+                  <th>Orders</th>
                   <th>Status</th>
                 </tr>
               </thead>
@@ -246,6 +260,24 @@ export function Suppliers() {
                         <>{s.contactName ? <span className="muted"> · </span> : null}<a href={`mailto:${s.contactEmail}`} onClick={(e) => e.stopPropagation()}>{s.contactEmail}</a></>
                       ) : null}
                       {!s.contactName && !s.contactEmail ? <span className="muted">—</span> : null}
+                    </td>
+                    <td className="suppliers-orders" onClick={(e) => e.stopPropagation()}>
+                      {(() => {
+                        const r = spend[s.id];
+                        const count = r?.poCount || 0;
+                        if (count === 0) return <span className="muted">No orders</span>;
+                        return (
+                          <button
+                            type="button"
+                            className="supplier-orders-btn"
+                            title={`View ${count} purchase order${count === 1 ? '' : 's'} — ${r.receivedCount} received`}
+                            onClick={() => openPurchaseOrdersForSupplier(s.id)}
+                          >
+                            <span className="supplier-orders-btn__count">{count} PO{count === 1 ? '' : 's'}</span>
+                            <span className="supplier-orders-btn__spend">{fmtSpend(r.totalSpendUsd)}</span>
+                          </button>
+                        );
+                      })()}
                     </td>
                     <td>
                       {s.status === 'archived'
@@ -414,4 +446,14 @@ function SupplierFormModal({ open, editing, onClose, onSave, onArchive, onUnarch
       </form>
     </Modal>
   );
+}
+
+// v0.49.48: compact USD for the per-supplier spend chip. Rounds to whole
+// dollars + uses k/M suffixes so a $1.2M supplier doesn't blow out the
+// column width.
+function fmtSpend(n) {
+  const v = Number(n) || 0;
+  if (v >= 1_000_000) return `$${(v / 1_000_000).toFixed(1)}M`;
+  if (v >= 10_000)    return `$${Math.round(v / 1000)}k`;
+  return `$${Math.round(v).toLocaleString()}`;
 }

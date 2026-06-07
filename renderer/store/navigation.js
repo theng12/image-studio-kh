@@ -30,6 +30,15 @@ export function createNavigationSlice(set, get) {
     // — Workspace context
     activeProductId: null,
 
+    // — v0.49.48: cross-module PO navigation. The Library Cost column +
+    // the Suppliers "Orders" button jump into the Purchase Orders module
+    // with context. These transient fields carry that context across the
+    // module switch; the PO module consumes + clears them on mount.
+    //   pendingPoId           → open this PO's detail page directly
+    //   pendingPoSupplierId   → open the PO list pre-filtered to this supplier
+    pendingPoId: null,
+    pendingPoSupplierId: null,
+
     setActiveModule(name) {
       if (!MODULES.includes(name)) {
         // Loud-fail in dev/devtools instead of silently dropping the request
@@ -50,6 +59,19 @@ export function createNavigationSlice(set, get) {
 
     openProductInWorkspace(productId) {
       set({ activeProductId: productId, activeModule: 'workspace' });
+    },
+
+    // v0.49.48: jump to a specific PO detail (from the Library Cost column).
+    openPurchaseOrder(poId) {
+      set({ pendingPoId: poId, pendingPoSupplierId: null, activeModule: 'purchaseorders' });
+    },
+    // v0.49.48: jump to the PO list filtered by a supplier (from Suppliers).
+    openPurchaseOrdersForSupplier(supplierId) {
+      set({ pendingPoSupplierId: supplierId, pendingPoId: null, activeModule: 'purchaseorders' });
+    },
+    // Consumed by the PO module once it's read the pending intent.
+    clearPendingPoNav() {
+      set({ pendingPoId: null, pendingPoSupplierId: null });
     },
 
     isModuleAvailable(name) {

@@ -44,6 +44,15 @@ function emptyForm() {
     description: '',
     priceRetail: '',
     priceWholesale: '',
+    // v0.49.48: logistics & sourcing — feed PO line prefills + landed cost.
+    supplierId: '',
+    supplierSku: '',
+    hsCode: '',
+    cartonQty: '',
+    cartonWCm: '',
+    cartonHCm: '',
+    cartonDCm: '',
+    weightPerUnitKg: '',
   };
 }
 
@@ -64,6 +73,15 @@ function productToForm(p) {
     description: p.description ?? '',
     priceRetail: p.priceRetail == null ? '' : String(p.priceRetail),
     priceWholesale: p.priceWholesale == null ? '' : String(p.priceWholesale),
+    // v0.49.48: logistics & sourcing.
+    supplierId: p.supplierId ?? '',
+    supplierSku: p.supplierSku ?? '',
+    hsCode: p.hsCode ?? '',
+    cartonQty: p.cartonQty == null ? '' : String(p.cartonQty),
+    cartonWCm: p.cartonWCm == null ? '' : String(p.cartonWCm),
+    cartonHCm: p.cartonHCm == null ? '' : String(p.cartonHCm),
+    cartonDCm: p.cartonDCm == null ? '' : String(p.cartonDCm),
+    weightPerUnitKg: p.weightPerUnitKg == null ? '' : String(p.weightPerUnitKg),
   };
 }
 
@@ -94,6 +112,10 @@ export function ProductForm({ product, isCreating = false, onClose, onStartCreat
   const createCategory = useAppStore((s) => s.createCategory);
   const addToast = useAppStore((s) => s.addToast);
   const openProductInWorkspace = useAppStore((s) => s.openProductInWorkspace);
+  // v0.49.48: active company drives the supplier dropdown in the
+  // Logistics & sourcing section.
+  const activeCompanyId = useAppStore((s) => s.activeCompanyId);
+  const [suppliers, setSuppliers] = useState([]);
   // v0.49.39: drag-out is hidden in client mode (the multi-file
   // drag-out IPC is a no-op there pending Phase 2 — see
   // main/client/index.js for the rationale). "Copy to folder…" still
@@ -158,6 +180,17 @@ export function ProductForm({ product, isCreating = false, onClose, onStartCreat
     setSelectedFilepaths(new Set());
     setCopyMenuOpen(false);
   }, [product, isCreating]);
+
+  // v0.49.48: load this company's suppliers for the sourcing dropdown.
+  // Includes archived (status 'all') so a product attached to a now-
+  // archived supplier still renders that supplier's name rather than
+  // falling back to a bare id.
+  useEffect(() => {
+    if (!activeCompanyId) { setSuppliers([]); return; }
+    window.api.suppliers.list(activeCompanyId, { status: 'all' })
+      .then((list) => setSuppliers(Array.isArray(list) ? list : []))
+      .catch(() => setSuppliers([]));
+  }, [activeCompanyId]);
 
   // v0.49.39: when the loaded image list shrinks (delete, reorder
   // renumber, etc.), drop any selected filepaths that no longer exist.
@@ -267,6 +300,15 @@ export function ProductForm({ product, isCreating = false, onClose, onStartCreat
       description: form.description.trim() || null,
       priceRetail: toNumberOrNull(form.priceRetail),
       priceWholesale: toNumberOrNull(form.priceWholesale),
+      // v0.49.48: logistics & sourcing — defaults that prefill PO lines.
+      supplierId: form.supplierId || null,
+      supplierSku: form.supplierSku.trim() || null,
+      hsCode: form.hsCode.trim() || null,
+      cartonQty: toNumberOrNull(form.cartonQty),
+      cartonWCm: toNumberOrNull(form.cartonWCm),
+      cartonHCm: toNumberOrNull(form.cartonHCm),
+      cartonDCm: toNumberOrNull(form.cartonDCm),
+      weightPerUnitKg: toNumberOrNull(form.weightPerUnitKg),
     };
   }
 
@@ -829,6 +871,53 @@ export function ProductForm({ product, isCreating = false, onClose, onStartCreat
         <Field label="Description" span="full">
           {({ id }) => <Textarea id={id} value={form.description} onChange={setField('description')} rows={3} />}
         </Field>
+
+        {/* v0.49.48: Logistics & sourcing. These default onto Purchase
+            Order line items when this product is added to a PO, and feed
+            the landed-cost volume/weight allocation. All optional. */}
+        <div className="field field--full pf-logistics">
+          <div className="pf-logistics__head">
+            <span className="field__label">Logistics &amp; sourcing</span>
+            <span className="field__hint" style={{ marginTop: 0 }}>
+              Defaults that prefill Purchase Order lines + feed landed-cost volume / weight allocation. All optional.
+            </span>
+          </div>
+          <div className="pf-logistics__grid">
+            <Field label="Default supplier">
+              {({ id }) => (
+                <Select id={id} value={form.supplierId} onChange={setField('supplierId')}>
+                  <option value="">— none —</option>
+                  {suppliers.map((s) => (
+                    <option key={s.id} value={s.id}>
+                      {s.name}{s.status === 'archived' ? ' (archived)' : ''}
+                    </option>
+                  ))}
+                </Select>
+              )}
+            </Field>
+            <Field label="Supplier SKU" hint="The supplier's own item code">
+              {({ id }) => <Input id={id} value={form.supplierSku} onChange={setField('supplierSku')} />}
+            </Field>
+            <Field label="HS code" hint="Customs tariff code">
+              {({ id }) => <Input id={id} value={form.hsCode} onChange={setField('hsCode')} placeholder="e.g. 6907.21" />}
+            </Field>
+            <Field label="Units per carton">
+              {({ id }) => <Input id={id} type="number" min="0" step="1" value={form.cartonQty} onChange={setField('cartonQty')} />}
+            </Field>
+            <Field label="Carton W (cm)">
+              {({ id }) => <Input id={id} type="number" min="0" step="0.1" value={form.cartonWCm} onChange={setField('cartonWCm')} />}
+            </Field>
+            <Field label="Carton H (cm)">
+              {({ id }) => <Input id={id} type="number" min="0" step="0.1" value={form.cartonHCm} onChange={setField('cartonHCm')} />}
+            </Field>
+            <Field label="Carton D (cm)">
+              {({ id }) => <Input id={id} type="number" min="0" step="0.1" value={form.cartonDCm} onChange={setField('cartonDCm')} />}
+            </Field>
+            <Field label="Weight per unit (kg)">
+              {({ id }) => <Input id={id} type="number" min="0" step="0.001" value={form.weightPerUnitKg} onChange={setField('weightPerUnitKg')} />}
+            </Field>
+          </div>
+        </div>
 
         {/* Image grid */}
         <div className="field field--full">

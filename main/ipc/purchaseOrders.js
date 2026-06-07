@@ -18,6 +18,9 @@ function register({ expose }) {
   expose('pos:listForSupplier',      (supplierId) => purchaseOrders.listPosForSupplier(supplierId));
   expose('pos:listForProduct',       (productId) => purchaseOrders.listPosForProduct(productId));
   expose('pos:getProductCost',       (productId) => purchaseOrders.getProductCost(productId));
+  // v0.49.48: bulk reads for the Library Cost column + Suppliers spend chip.
+  expose('pos:listProductCosts',     (companyId) => purchaseOrders.listProductCosts(companyId));
+  expose('pos:supplierSpendRollup',  (companyId) => purchaseOrders.supplierSpendRollup(companyId));
 
   // Header CRUD
   expose('pos:create',               (input) => purchaseOrders.create(input ?? {}));

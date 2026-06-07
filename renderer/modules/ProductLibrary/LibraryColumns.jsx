@@ -20,6 +20,11 @@ export const COLUMN_DEFS = [
   { key: 'category', label: 'Category',       defaultVisible: true,  optional: true },
   { key: 'color',    label: 'Color / Finish', defaultVisible: true,  optional: true },
   { key: 'images',   label: 'Images',         defaultVisible: true,  optional: true },
+  // v0.49.48: landed cost from the latest received PO. Default OFF —
+  // most users browse the catalog without cost in view, and the data is
+  // only present once POs have been received. Opt in via the column
+  // picker. The cell click-throughs to the source PO when one exists.
+  { key: 'cost',     label: 'Landed cost',    defaultVisible: false, optional: true },
   { key: 'process',  label: 'Process',        defaultVisible: true,  optional: true },
   { key: 'status',   label: 'Status',         defaultVisible: true,  optional: true },
   { key: 'edited',   label: 'Edited',         defaultVisible: true,  optional: true },

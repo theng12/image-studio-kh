@@ -9569,3 +9569,72 @@ body[data-role="photographer"] .image-tile__nav-btn { display: none !important; 
   color: var(--c-text);
   font-variant-numeric: tabular-nums;
 }
+
+/* ───────────────────────────────────────────────────────────────────
+ *  v0.49.48 — costing integrations: Library Cost column, Suppliers
+ *  spend chip, Product form Logistics & sourcing section.
+ * ─────────────────────────────────────────────────────────────────── */
+
+/* Library Cost column — the value links to the source PO when one
+ * exists. Styled as a quiet inline link, not a button-looking blob. */
+.lib-table .col-cost { font-variant-numeric: tabular-nums; }
+.lib-cost-link {
+  background: none;
+  border: none;
+  padding: 0;
+  font: inherit;
+  color: var(--c-accent, #0a84ff);
+  cursor: pointer;
+  font-variant-numeric: tabular-nums;
+  border-bottom: 1px dotted color-mix(in srgb, var(--c-accent, #0a84ff) 50%, transparent);
+}
+.lib-cost-link:hover { border-bottom-style: solid; }
+
+/* Suppliers "Orders" cell — a compact PO-count + spend chip that
+ * navigates to the filtered PO list. */
+.suppliers-orders { white-space: nowrap; }
+.supplier-orders-btn {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  padding: 3px 8px;
+  border: 1px solid var(--c-border);
+  border-radius: 999px;
+  background: var(--c-bg, #fff);
+  cursor: pointer;
+  transition: background 80ms, border-color 80ms;
+}
+.supplier-orders-btn:hover {
+  background: var(--c-bg-hover, rgba(0,0,0,0.04));
+  border-color: var(--c-accent, #0a84ff);
+}
+.supplier-orders-btn__count {
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--c-text);
+}
+.supplier-orders-btn__spend {
+  font-size: 11.5px;
+  color: var(--c-text-muted, #71717a);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Product form — Logistics & sourcing block sits inside the form grid
+ * (full width) with its own labelled sub-grid so the eight fields don't
+ * crowd the scalar product fields above. */
+.pf-logistics {
+  border-top: 1px solid var(--c-border);
+  padding-top: var(--s-3);
+  margin-top: var(--s-2);
+}
+.pf-logistics__head {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-bottom: var(--s-3);
+}
+.pf-logistics__grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--s-3);
+}

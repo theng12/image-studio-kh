@@ -2,6 +2,18 @@ import { Modal } from './ui.jsx';
 
 const CHANGELOG = [
   {
+    version: '0.49.48',
+    date: '2026-06-07',
+    items: [
+      'NEW — **Landed cost surfaces in the Product Library.** Turn on the "Landed cost" column via the Columns picker (it\'s off by default) and every product shows its latest landed cost from the most recent received PO. The figure links straight to the source purchase order — click it to open that PO\'s detail page. This closes the loop: cost data is no longer trapped inside the Operations section, it\'s visible right where you browse the catalog.',
+      'NEW — **Per-supplier order history + spend.** The Suppliers page gains an "Orders" column showing each supplier\'s PO count and total spend (USD, summed across goods value + cost components). Click the chip to jump to the Purchase Orders list pre-filtered to that supplier. Spend is abbreviated ($12k, $1.2M) so it never blows out the column.',
+      'NEW — **Logistics & sourcing fields on the product.** The product editor (side panel) now has a "Logistics & sourcing" section: default supplier, supplier SKU, HS (customs tariff) code, units per carton, carton W/H/D in cm, and weight per unit. These **prefill automatically** when you add the product to a Purchase Order line — so you set carton dimensions once on the product and never re-type them per PO. They also feed the landed-cost volume / weight allocation. All optional.',
+      'Why this matters — v0.49.47 shipped the Purchase Order + landed-cost engine, but the numbers only lived inside the PO detail page. v0.49.48 wires those numbers back into the two places you actually work: the catalog (Library Cost column) and the vendor list (Suppliers spend). Plus the product now carries its own logistics defaults, so the PO → cost → catalog loop runs end-to-end without re-entering carton data.',
+      'Internal — new bulk reads `pos:listProductCosts` (one query for the whole Library Cost column) + `pos:supplierSpendRollup` (one query for all supplier spend chips), both proxied to client mode + role-gated to viewer+. Products table now reads/writes the v0.49.47 logistics columns (`supplier_id`, `supplier_sku`, `hs_code`, `carton_qty`, `carton_w_cm`, `carton_h_cm`, `carton_d_cm`, `weight_per_unit_kg`) through the normal create / update / rowToProduct paths. Cross-module navigation added to the store (`openPurchaseOrder`, `openPurchaseOrdersForSupplier`) so the Library + Suppliers pages can deep-link into the PO module.',
+      'Verified: tests pass. Build clean.',
+    ],
+  },
+  {
     version: '0.49.47',
     date: '2026-06-07',
     items: [

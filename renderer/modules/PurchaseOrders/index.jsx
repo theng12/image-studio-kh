@@ -64,21 +64,33 @@ export function STATUS_LABEL(status) {
 export function PurchaseOrders() {
   const activeCompanyId = useAppStore((s) => s.activeCompanyId);
   const addToast = useAppStore((s) => s.addToast);
+  // v0.49.48: pending cross-module navigation (from Library Cost column
+  // or Suppliers "Orders" button). Consumed once on mount.
+  const pendingPoId = useAppStore((s) => s.pendingPoId);
+  const pendingPoSupplierId = useAppStore((s) => s.pendingPoSupplierId);
+  const clearPendingPoNav = useAppStore((s) => s.clearPendingPoNav);
 
   const [rows, setRows] = useState([]);
   const [suppliers, setSuppliers] = useState([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
-  const [supplierFilter, setSupplierFilter] = useState('');
+  const [supplierFilter, setSupplierFilter] = useState(pendingPoSupplierId || '');
   const [statusFilter, setStatusFilter] = useState('all');
-  const [openPoId, setOpenPoId] = useState(null); // null = list view; id = detail
+  const [openPoId, setOpenPoId] = useState(pendingPoId || null); // null = list view; id = detail
   const [creating, setCreating] = useState(false);
   const [page, setPage] = useState(0);
   const [pageSize, setPageSize] = useState(50);
 
+  // Consume the pending-nav intent exactly once, then clear it so a later
+  // manual return to this module doesn't re-trigger the jump.
+  useEffect(() => {
+    if (pendingPoId || pendingPoSupplierId) clearPendingPoNav();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   useEffect(() => {
     if (!activeCompanyId) { setSuppliers([]); return; }
-    window.api.suppliers.list(activeCompanyId, { status: 'active' })
+    window.api.suppliers.list(activeCompanyId, { status: 'all' })
       .then((list) => setSuppliers(Array.isArray(list) ? list : []))
       .catch(() => setSuppliers([]));
   }, [activeCompanyId]);

@@ -276,6 +276,9 @@ contextBridge.exposeInMainWorld('api', {
     listForSupplier:  (supplierId)                => invoke('pos:listForSupplier', supplierId),
     listForProduct:   (productId)                 => invoke('pos:listForProduct', productId),
     getProductCost:   (productId)                 => invoke('pos:getProductCost', productId),
+    // v0.49.48: bulk — one call for the whole Library Cost column / Suppliers spend chips.
+    listProductCosts: (companyId)                 => invoke('pos:listProductCosts', companyId),
+    supplierSpendRollup: (companyId)              => invoke('pos:supplierSpendRollup', companyId),
     // Header CRUD
     create:           (input)                     => invoke('pos:create', input),
     update:           (id, patch)                 => invoke('pos:update', { id, patch }),

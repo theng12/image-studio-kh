@@ -4,6 +4,13 @@ import { CompactAttribution } from '../../components/Attribution.jsx';
 import { appImageSrc } from '../../lib/imageUrl.js';
 import { PROCESS_STATUS_OPTIONS, STATUS_OPTIONS, findOption } from './libraryConstants.js';
 
+// v0.49.48: compact USD formatter for the Cost column.
+function fmtUsd(n) {
+  const v = Number(n);
+  if (!Number.isFinite(v)) return '—';
+  return `$${v.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+}
+
 export function TableView({
   rows, brandsById, categoriesById, onOpen, onProcess, onPreview, sort, onSort,
   selectedProductId, selectedIds, onToggleSelected, onToggleAllVisible,
@@ -11,6 +18,9 @@ export function TableView({
   // consult this; SKU + thumb + select + actions are not in the set
   // (they're locked-on).
   visibleCols,
+  // v0.49.48: landed-cost map (productId → cost row) + click-through to
+  // the source PO. Only consulted when the 'cost' column is visible.
+  productCosts, onOpenCost,
 }) {
   // v0.18.1: header checkbox state — checked when ALL visible rows
   // are in the selection set, indeterminate when some are.
@@ -41,6 +51,7 @@ export function TableView({
             {show('category') ? <SortHeader sortKey="category" label="Category"       sort={sort} onSort={onSort} /> : null}
             {show('color')    ? <SortHeader sortKey="color"    label="Color / Finish" sort={sort} onSort={onSort} /> : null}
             {show('images')   ? <SortHeader sortKey="images"   label="Images"         sort={sort} onSort={onSort} numeric /> : null}
+            {show('cost')     ? <th className="col-num">Landed cost</th> : null}
             {show('process')  ? <th>Process</th> : null}
             {show('status')   ? <th>Status</th> : null}
             {/* v0.22.5: "Edited" column surfaces the per-row attribution
@@ -65,6 +76,8 @@ export function TableView({
               checked={selectedIds?.has(p.id) ?? false}
               onToggleCheck={onToggleSelected}
               visibleCols={visibleCols}
+              cost={productCosts?.get(p.id) || null}
+              onOpenCost={onOpenCost}
             />
           ))}
         </tbody>
@@ -110,6 +123,8 @@ const TableRow = memo(function TableRow({
   // "show all" so TableRow stays usable for any caller that hasn't
   // adopted the picker yet (none today, but easy to keep symmetric).
   visibleCols,
+  // v0.49.48: landed-cost row for this product (or null) + PO opener.
+  cost, onOpenCost,
 }) {
   const proc = findOption(PROCESS_STATUS_OPTIONS, p.processStatus);
   const stat = findOption(STATUS_OPTIONS, p.status);
@@ -153,6 +168,26 @@ const TableRow = memo(function TableRow({
       {show('category') ? <td>{category?.name ?? <span className="muted">—</span>}</td> : null}
       {show('color')    ? <td>{p.colorFinish ?? <span className="muted">—</span>}</td> : null}
       {show('images')   ? <td className="col-num">{p.imageCount}/50</td> : null}
+      {show('cost') ? (
+        <td className="col-num col-cost" onClick={(e) => e.stopPropagation()}>
+          {cost && cost.latestLandedCostUsd != null ? (
+            cost.latestPoId ? (
+              <button
+                type="button"
+                className="lib-cost-link"
+                title="Open the source purchase order"
+                onClick={() => onOpenCost?.(cost.latestPoId)}
+              >
+                {fmtUsd(cost.latestLandedCostUsd)}
+              </button>
+            ) : (
+              <span title="Latest landed cost">{fmtUsd(cost.latestLandedCostUsd)}</span>
+            )
+          ) : (
+            <span className="muted">—</span>
+          )}
+        </td>
+      ) : null}
       {show('process')  ? <td>{proc ? <Badge tone={proc.tone}>{proc.label}</Badge> : null}</td> : null}
       {show('status')   ? <td>{stat ? <Badge tone={stat.tone}>{stat.label}</Badge> : null}</td> : null}
       {show('edited') ? (

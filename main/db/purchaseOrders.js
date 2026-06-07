@@ -669,6 +669,64 @@ function listPosForSupplier(supplierId) {
   `).all(supplierId).map(rowToPO);
 }
 
+/**
+ * v0.49.48 — bulk cost fetch for the Product Library Cost column.
+ * Returns a flat array of cost rows for every product in the company
+ * that has a cached cost. The renderer keys it into a Map. One query
+ * instead of N per-row round-trips — important on a 200-row table in
+ * client mode.
+ */
+function listProductCosts(companyId) {
+  if (!companyId) return [];
+  return getDb().prepare(`
+    SELECT plc.*
+      FROM product_landed_costs plc
+      JOIN products p ON p.id = plc.product_id
+     WHERE p.company_id = ?
+  `).all(companyId).map((row) => ({
+    productId:            row.product_id,
+    latestLandedCostUsd:  row.latest_landed_cost_usd,
+    latestPoId:           row.latest_po_id,
+    latestReceivedAt:     row.latest_received_at,
+    avgLandedCostUsd3mo:  row.avg_landed_cost_usd_3mo,
+    avgLandedCostUsd12mo: row.avg_landed_cost_usd_12mo,
+    updatedAt:            row.updated_at,
+  }));
+}
+
+/**
+ * v0.49.48 — per-supplier spend rollup for the Suppliers page. Returns
+ * a map keyed by supplier_id: { poCount, receivedCount, totalSpendUsd,
+ * lastOrderedAt }. totalSpendUsd sums goods value + cost components in
+ * USD across every PO for that supplier (any status — a draft PO is
+ * committed spend the buyer is planning). Used to show a spend chip +
+ * order count per supplier without N queries.
+ */
+function supplierSpendRollup(companyId) {
+  if (!companyId) return {};
+  const rows = getDb().prepare(`
+    SELECT supplier_id,
+           COUNT(*)                                             AS po_count,
+           SUM(CASE WHEN status = 'received' THEN 1 ELSE 0 END) AS received_count,
+           SUM(COALESCE(total_value_usd, 0) + COALESCE(total_components_usd, 0)) AS total_spend_usd,
+           MAX(COALESCE(ordered_at, created_at))                AS last_ordered_at
+      FROM purchase_orders
+     WHERE company_id = ?
+     GROUP BY supplier_id
+  `).all(companyId);
+  const map = {};
+  for (const r of rows) {
+    if (!r.supplier_id) continue;
+    map[r.supplier_id] = {
+      poCount:       r.po_count || 0,
+      receivedCount: r.received_count || 0,
+      totalSpendUsd: r.total_spend_usd || 0,
+      lastOrderedAt: r.last_ordered_at || null,
+    };
+  }
+  return map;
+}
+
 function listPosForProduct(productId) {
   if (!productId) return [];
   return getDb().prepare(`
@@ -690,5 +748,6 @@ module.exports = {
   addLine, updateLine, removeLine,
   addComponent, updateComponent, removeComponent,
   recomputeHeader, recomputeProductCost,
-  getProductCost, listPosForSupplier, listPosForProduct,
+  getProductCost, listProductCosts, supplierSpendRollup,
+  listPosForSupplier, listPosForProduct,
 };
