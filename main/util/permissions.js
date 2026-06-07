@@ -60,6 +60,13 @@ const READ_CHANNELS = new Set([
   'ai:getCredits', 'ai:estimateCost',
   'templates:list', 'templates:get', 'templates:listRuns',
   'exports:listProfiles', 'exports:getProfile', 'exports:listRuns',
+  // v0.49.46: OPERATIONS reads. Photographer / viewer don't see the
+  // OPERATIONS sidebar entries (the renderer hides them), so these
+  // never get called from those roles in practice — but allowing
+  // the reads avoids 403s if a stray code path still calls them
+  // (e.g. a cost field shown on a product page). Writes stay
+  // editor-or-admin via the fall-through below.
+  'suppliers:list', 'suppliers:get',
 ]);
 
 // Photographer can additionally ADD photos and use the basic file pickers

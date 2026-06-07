@@ -568,6 +568,124 @@ function runMigrations(database) {
     CREATE INDEX IF NOT EXISTS idx_image_template_runs_company_created
       ON image_template_runs(company_id, created_at DESC);
 
+    /* --- v0.49.46: OPERATIONS - supplier + PO + cost tables ------
+     *
+     * Phase 1 of the costing system. Tables exist on every install but
+     * stay empty until the user actually uses the OPERATIONS section.
+     * Additive - no schema_version bump. The role gate in
+     * util/permissions.js hides the sidebar entries from
+     * photographer / viewer users so the new columns are not even
+     * surfaced for catalog-only Macs.
+     *
+     * (Long-form rationale lives in the design doc; intentionally short
+     * here because this comment sits inside a JS template literal and
+     * backticks would close the literal early. See WhatsNew v0.49.46
+     * for the currency model + Incoterm semantics writeup.)
+     */
+
+    CREATE TABLE IF NOT EXISTS suppliers (
+      id TEXT PRIMARY KEY,
+      company_id  TEXT NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+      name        TEXT NOT NULL,
+      country     TEXT,
+      default_currency TEXT NOT NULL DEFAULT 'USD',
+      default_incoterm TEXT,  -- 'EXW' | 'FOB' | 'CFR' | 'CIF' | NULL
+      -- Contact + reference fields. All optional; kept in flat columns
+      -- (not JSON) so they're searchable from SQL without a JSON1
+      -- extension dance.
+      contact_name  TEXT,
+      contact_email TEXT,
+      contact_phone TEXT,
+      website       TEXT,
+      address       TEXT,
+      notes         TEXT,
+      status        TEXT NOT NULL DEFAULT 'active', -- 'active' | 'archived'
+      created_at    INTEGER NOT NULL,
+      updated_at    INTEGER NOT NULL,
+      updated_by_user_id TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_suppliers_company_name
+      ON suppliers(company_id, name COLLATE NOCASE);
+    CREATE INDEX IF NOT EXISTS idx_suppliers_company_status
+      ON suppliers(company_id, status);
+
+    CREATE TABLE IF NOT EXISTS purchase_orders (
+      id          TEXT PRIMARY KEY,
+      company_id  TEXT NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+      supplier_id TEXT NOT NULL REFERENCES suppliers(id) ON DELETE RESTRICT,
+      po_number   TEXT,                -- user-facing identifier, NOT unique (can repeat across suppliers)
+      incoterm    TEXT NOT NULL,       -- 'EXW' | 'FOB' | 'CFR' | 'CIF'
+      currency    TEXT NOT NULL,       -- 'USD' | 'CNY' | 'THB' | …
+      exchange_rate_to_usd REAL NOT NULL DEFAULT 1.0,  -- 1 unit currency = N USD
+      exchange_rate_date   INTEGER,    -- when the rate was captured
+      status      TEXT NOT NULL DEFAULT 'draft', -- 'draft' | 'ordered' | 'in_transit' | 'received' | 'closed'
+      container_type TEXT,             -- '20' | '40' | '40HQ' | 'LCL' | NULL
+      ordered_at  INTEGER,
+      eta         INTEGER,
+      received_at INTEGER,             -- when status flipped to 'received'; locks landed cost cache
+      notes       TEXT,
+      created_at  INTEGER NOT NULL,
+      updated_at  INTEGER NOT NULL,
+      updated_by_user_id TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_purchase_orders_company_status_created
+      ON purchase_orders(company_id, status, created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_purchase_orders_supplier
+      ON purchase_orders(supplier_id);
+
+    CREATE TABLE IF NOT EXISTS po_lines (
+      id          TEXT PRIMARY KEY,
+      po_id       TEXT NOT NULL REFERENCES purchase_orders(id) ON DELETE CASCADE,
+      product_id  TEXT NOT NULL REFERENCES products(id) ON DELETE RESTRICT,
+      -- v0.49.46: supplier_sku is the supplier's code for this SKU,
+      -- which often differs from our own SKU. Free text, optional.
+      supplier_sku TEXT,
+      qty                          REAL NOT NULL,
+      unit_price_supplier_currency REAL NOT NULL,
+      -- USD snapshot at PO time; never recomputed when the exchange
+      -- rate moves later. Updated when the line's supplier_currency
+      -- price changes (then we re-snapshot).
+      unit_price_usd_at_po         REAL NOT NULL,
+      -- Allocated container cost — see po_cost_components — divided
+      -- across lines by allocation_basis. Filled when status hits
+      -- 'received' (or via the Recalculate button). NULL = not yet
+      -- computed for this revision of the PO.
+      allocated_cost_usd_per_unit  REAL,
+      landed_unit_cost_usd         REAL,
+      notes       TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_po_lines_po ON po_lines(po_id);
+    CREATE INDEX IF NOT EXISTS idx_po_lines_product ON po_lines(product_id);
+
+    CREATE TABLE IF NOT EXISTS po_cost_components (
+      id    TEXT PRIMARY KEY,
+      po_id TEXT NOT NULL REFERENCES purchase_orders(id) ON DELETE CASCADE,
+      kind  TEXT NOT NULL, -- 'freight' | 'insurance' | 'duty' | 'clearance' | 'inland' | 'storage' | 'other'
+      label TEXT,          -- user free text, e.g. 'OOCL freight invoice #...' (optional)
+      amount_supplier_currency REAL NOT NULL,
+      amount_usd               REAL NOT NULL,
+      -- How this component should be spread across po_lines:
+      allocation_basis TEXT NOT NULL DEFAULT 'by_value', -- 'by_value' | 'by_volume' | 'by_weight' | 'flat_per_line'
+      notes TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_po_cost_components_po ON po_cost_components(po_id);
+
+    /* product_landed_costs: derived/cache. Rebuilt when a PO
+       transitions to 'received' (or via Recalculate). Keeping
+       latest + 3-month and 12-month averages here means the Product
+       Library can show cost without joining + aggregating on every
+       query. Refreshed in a transaction with the PO state change so
+       it can't drift. */
+    CREATE TABLE IF NOT EXISTS product_landed_costs (
+      product_id TEXT PRIMARY KEY REFERENCES products(id) ON DELETE CASCADE,
+      latest_landed_cost_usd        REAL,
+      latest_po_id                  TEXT REFERENCES purchase_orders(id) ON DELETE SET NULL,
+      latest_received_at            INTEGER,
+      avg_landed_cost_usd_3mo       REAL,  -- weighted by qty
+      avg_landed_cost_usd_12mo      REAL,
+      updated_at                    INTEGER NOT NULL
+    );
+
     /* v0.14.0: server-mode users. Per-user tokens for the multi-Mac
      * client/server feature. Only relevant when mode is 'server'; in
      * standalone mode this table exists but stays empty. The token

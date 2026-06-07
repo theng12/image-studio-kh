@@ -9333,3 +9333,72 @@ body[data-role="photographer"] .image-tile__nav-btn { display: none !important; 
   color: var(--c-text);
   min-width: 0;
 }
+
+/* ───────────────────────────────────────────────────────────────────
+ *  v0.49.46 — Suppliers (OPERATIONS Phase 1)
+ * ─────────────────────────────────────────────────────────────────── */
+
+.page--suppliers .suppliers-toolbar {
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+  padding: var(--s-3) var(--s-5);
+  border-bottom: 1px solid var(--c-border);
+}
+.page--suppliers .suppliers-toolbar .search-wrap { flex: 1; max-width: 480px; }
+
+.suppliers-table-wrap {
+  overflow-x: auto;
+  padding: 0 var(--s-5);
+}
+.suppliers-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+.suppliers-table thead th {
+  text-align: left;
+  font-weight: 500;
+  color: var(--c-text-muted, #71717a);
+  padding: 10px 10px;
+  border-bottom: 1px solid var(--c-border);
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  font-size: 11px;
+}
+.suppliers-table tbody td {
+  padding: 12px 10px;
+  border-bottom: 1px solid var(--c-border);
+  vertical-align: middle;
+}
+.suppliers-row {
+  cursor: pointer;
+  transition: background 80ms;
+}
+.suppliers-row:hover {
+  background: var(--c-bg-hover, rgba(0,0,0,0.04));
+}
+.suppliers-row.is-archived td {
+  opacity: 0.55;
+}
+.suppliers-row.is-archived td strong {
+  text-decoration: line-through;
+  text-decoration-thickness: 1px;
+}
+
+/* Form sections inside the supplier modal — visually group the Contact
+ * fields so the modal doesn't read as one long undifferentiated list. */
+.supplier-form__section {
+  border: 1px solid var(--c-border);
+  border-radius: 6px;
+  padding: var(--s-3) var(--s-4);
+  margin-top: var(--s-3);
+}
+.supplier-form__section legend {
+  padding: 0 6px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--c-text-muted, #71717a);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}

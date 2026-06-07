@@ -59,6 +59,18 @@ const NAV = [
     ],
   },
   {
+    // v0.49.46: OPERATIONS section. Phase 1 only ships Suppliers; POs +
+    // Cost Calculator land in v0.49.47 and v0.49.48 respectively. Hidden
+    // for viewer / photographer roles because cost data is the kind of
+    // thing they shouldn't see — the lowest role with access is editor.
+    // The whole section is dropped if every item inside it is gated out
+    // (see Sidebar render filter).
+    label: 'Operations',
+    items: [
+      { id: 'suppliers', name: 'Suppliers', icon: IconSupplier, shortcut: '8', roleMin: 'editor' },
+    ],
+  },
+  {
     label: 'System',
     items: [
       // v0.26.31: global audit-log feed. Sits above Settings because
@@ -635,6 +647,20 @@ function IconSettings({ className }) {
 }
 
 // v0.26.31: clock with arrow — classic "history" iconography.
+// v0.49.46: small box-on-a-shelf glyph for Suppliers. Two horizontal
+// shelf lines + a stacked box reads as "inventory source" — distinct
+// from Library (grid) and Brands (shield).
+function IconSupplier({ className }) {
+  return (
+    <svg className={className} width="18" height="18" viewBox="0 0 18 18" fill="none">
+      <path d="M2.5 6.5h13M2.5 12.5h13" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
+      <rect x="5" y="3" width="5" height="3" rx="0.5" stroke="currentColor" strokeWidth="1.4" />
+      <rect x="3" y="9" width="4" height="3.5" rx="0.5" stroke="currentColor" strokeWidth="1.4" />
+      <rect x="10" y="9" width="5" height="3.5" rx="0.5" stroke="currentColor" strokeWidth="1.4" />
+    </svg>
+  );
+}
+
 function IconHistory({ className }) {
   return (
     <svg className={className} width="18" height="18" viewBox="0 0 18 18" fill="none">

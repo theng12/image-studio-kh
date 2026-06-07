@@ -2,6 +2,19 @@ import { Modal } from './ui.jsx';
 
 const CHANGELOG = [
   {
+    version: '0.49.46',
+    date: '2026-06-05',
+    items: [
+      'NEW — **OPERATIONS** section appears in the sidebar (above SYSTEM, below PRODUCTION). Hidden for Viewer + Photographer roles since cost data should not be visible to image-only contributors. First module inside: **Suppliers** — Phase 1 of the costing system.',
+      'Suppliers page lets you maintain the vendors you buy stock from: name, country, default currency (USD / CNY / THB / VND / KHR / EUR / JPY / KRW / INR / IDR / MYR / SGD), default Incoterm (EXW / FOB / CFR-aka-CNF / CIF), contact info, address, free-form notes. Search by name + country; filter by Active / Archived / All. Archived suppliers stop appearing in the create-PO picker (coming v0.49.47) but their PO history stays. Deleting a supplier is refused if any PO references them — archive instead.',
+      'Currency model — each Purchase Order (when v0.49.47 ships) will carry its own currency + an `exchange_rate_to_usd` snapshot captured at PO creation. That way historical reports do not drift when the exchange rate moves later. Selling stays in USD across the app.',
+      'Incoterm reference (shown inline in the supplier form): EXW = ex-works (buyer pays everything from factory gate). FOB = free on board (buyer pays from origin port). CFR / CNF = cost & freight (supplier covers freight; buyer covers insurance + duty). CIF = cost, insurance, freight (supplier covers freight + insurance; buyer covers duty). When you add cost components to a PO in v0.49.47, the editor will warn if you add a line the Incoterm says should already be included (e.g. a "freight" line on a CFR PO).',
+      'Internal — new schema tables: `suppliers`, `purchase_orders`, `po_lines`, `po_cost_components`, `product_landed_costs`. All `company_id`-scoped. Tables ride existing `.iskhbackup` mechanism for free; no migration risk to existing data (additive only — schema_version unchanged). New IPC domain `suppliers:*` registered in main/ipc.js, proxied to client mode via PROXIED_CHANNELS, role-gated (reads everywhere, writes editor+admin only). New renderer module at `modules/Suppliers/` mirrors the existing Categories shape (table + modal form). Module registered in App.jsx + store/navigation.js MODULES allowlist (lessons from v0.10.3 not forgotten).',
+      'Coming in v0.49.47 — Purchase Orders CRUD with line items + cost components + Incoterm-aware warnings. Coming in v0.49.48 — landed cost calculation that runs when a PO transitions to "received", populating `product_landed_costs` cache for display on the Product Library row.',
+      'Verified: 100/100 tests pass. Build clean.',
+    ],
+  },
+  {
     version: '0.49.45',
     date: '2026-06-04',
     items: [

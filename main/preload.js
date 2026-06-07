@@ -255,6 +255,16 @@ contextBridge.exposeInMainWorld('api', {
     update: (id, patch)         => invoke('categories:update', { id, patch }),
     remove: (id)                => invoke('categories:remove', id),
   },
+  /** v0.49.46: OPERATIONS — suppliers (Phase 1). POs follow in v0.49.47. */
+  suppliers: {
+    list:      (companyId, filters) => invoke('suppliers:list', { companyId, filters }),
+    get:       (id)                 => invoke('suppliers:get', id),
+    create:    (input)              => invoke('suppliers:create', input),
+    update:    (id, patch)          => invoke('suppliers:update', { id, patch }),
+    archive:   (id)                 => invoke('suppliers:archive', id),
+    unarchive: (id)                 => invoke('suppliers:unarchive', id),
+    remove:    (id)                 => invoke('suppliers:remove', id),
+  },
   watermarks: {
     upload:          (sourcePath)              => invoke('watermarks:upload', { sourcePath }),
     uploadFromBytes: (bytes, ext, name)        => invoke('watermarks:uploadFromBytes', { bytes, ext, name }),

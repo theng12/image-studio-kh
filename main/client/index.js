@@ -649,6 +649,11 @@ const PROXIED_CHANNELS = [
   'audit:historyStats', 'audit:clearHistory',
   'brands:create',    'brands:update',    'brands:remove',
   'categories:create','categories:update','categories:remove',
+  // v0.49.46: OPERATIONS — suppliers CRUD. Pure DB operations on the
+  // server, no local filesystem access needed, so straight RPC works.
+  // POs and cost components added in v0.49.47.
+  'suppliers:list','suppliers:get','suppliers:create','suppliers:update',
+  'suppliers:archive','suppliers:unarchive','suppliers:remove',
   'ai:createPrompt','ai:updatePrompt','ai:removePrompt',
   'ai:queueTask','ai:repairTask','ai:queueFreshTask','ai:cancelTask','ai:removeTask',
   'ai:favoriteGallery','ai:removeGallery','ai:promoteGalleryToProduct',
