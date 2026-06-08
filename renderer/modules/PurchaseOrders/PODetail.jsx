@@ -49,6 +49,44 @@ const COMPONENT_KINDS = [
   'inspection', 'discount', 'other',
 ];
 
+// v0.49.50: payment ledger constants.
+const PAYMENT_KINDS = [
+  { value: 'deposit', label: 'Deposit' },
+  { value: 'balance', label: 'Balance' },
+  { value: 'partial', label: 'Partial' },
+  { value: 'final',   label: 'Final' },
+  { value: 'other',   label: 'Other' },
+];
+const PAYMENT_STATUSES = [
+  { value: 'planned',   label: 'Planned' },   // scheduled, not yet wired
+  { value: 'paid',      label: 'Paid' },       // TT sent
+  { value: 'confirmed', label: 'Confirmed' },  // supplier acknowledged receipt
+];
+
+export function PAYMENT_STATUS_TONE(status) {
+  switch (status) {
+    case 'unpaid':         return 'slate';
+    case 'deposit_paid':   return 'amber';
+    case 'partially_paid': return 'amber';
+    case 'paid_in_full':   return 'emerald';
+    case 'overpaid':       return 'rose';
+    default:               return 'slate';
+  }
+}
+export function PAYMENT_STATUS_LABEL(status) {
+  switch (status) {
+    case 'unpaid':         return 'Unpaid';
+    case 'deposit_paid':   return 'Deposit paid';
+    case 'partially_paid': return 'Partially paid';
+    case 'paid_in_full':   return 'Paid in full';
+    case 'overpaid':       return 'Overpaid';
+    default:               return status || '—';
+  }
+}
+function PAYMENT_TT_STATUS_LABEL(s) {
+  return (PAYMENT_STATUSES.find((x) => x.value === s) || {}).label || s;
+}
+
 export function PODetail({ poId, onBack }) {
   const addToast = useAppStore((s) => s.addToast);
   const [detail, setDetail] = useState(null);
@@ -58,6 +96,9 @@ export function PODetail({ poId, onBack }) {
   const [addingComponent, setAddingComponent] = useState(false);
   const [editingLine, setEditingLine] = useState(null);
   const [editingComponent, setEditingComponent] = useState(null);
+  // v0.49.50: payment ledger.
+  const [addingPayment, setAddingPayment] = useState(false);
+  const [editingPayment, setEditingPayment] = useState(null);
 
   const header = detail?.header || null;
 
@@ -196,6 +237,44 @@ export function PODetail({ poId, onBack }) {
       addToast('Component removed', 'success');
     } catch (err) {
       addToast(`Failed to remove component: ${err.message}`, 'error');
+    }
+  }
+
+  // v0.49.50: payments.
+  async function addPayment(input) {
+    try {
+      const snap = await window.api.purchaseOrders.addPayment(poId, input);
+      applySnapshot(snap);
+      setAddingPayment(false);
+      addToast('Payment recorded', 'success');
+    } catch (err) {
+      addToast(`Failed to record payment: ${err.message}`, 'error');
+    }
+  }
+  async function updatePayment(paymentId, patch) {
+    try {
+      const snap = await window.api.purchaseOrders.updatePayment(paymentId, patch);
+      applySnapshot(snap);
+      setEditingPayment(null);
+      addToast('Payment updated', 'success');
+    } catch (err) {
+      addToast(`Failed to update payment: ${err.message}`, 'error');
+    }
+  }
+  async function removePayment(p) {
+    const sure = await confirm({
+      title: 'Delete this payment?',
+      body: 'Removes the TT record from this PO. Cannot be undone.',
+      confirmLabel: 'Delete',
+      destructive: true,
+    });
+    if (!sure) return;
+    try {
+      const snap = await window.api.purchaseOrders.removePayment(p.id);
+      applySnapshot(snap);
+      addToast('Payment removed', 'success');
+    } catch (err) {
+      addToast(`Failed to remove payment: ${err.message}`, 'error');
     }
   }
 
@@ -432,6 +511,100 @@ export function PODetail({ poId, onBack }) {
         )}
       </section>
 
+      {/* v0.49.50: Payments (TT ledger). */}
+      <section className="po-section">
+        <header className="po-section__header">
+          <h3 className="po-section__title">Payments ({detail.payments?.length || 0})</h3>
+          <Button variant="primary" onClick={() => setAddingPayment(true)}>Record payment</Button>
+        </header>
+
+        {/* Payment summary card — reconciles against what you wire the
+            supplier (goods value), not the full landed cost. */}
+        {(() => {
+          const ps = detail.paymentSummary || {};
+          const owed = ps.owedSupplier || 0;
+          const paid = ps.paidSupplier || 0;
+          const out = ps.outstandingSupplier || 0;
+          const pct = Math.max(0, Math.min(100, ps.pct || 0));
+          return (
+            <div className="po-pay-summary">
+              <div className="po-pay-summary__top">
+                <Badge tone={PAYMENT_STATUS_TONE(ps.status)}>{PAYMENT_STATUS_LABEL(ps.status)}</Badge>
+                <span className="muted">
+                  Reconciled against supplier goods value ({header.currency})
+                </span>
+              </div>
+              <div className="po-pay-bar"><div className="po-pay-bar__fill" style={{ width: `${pct}%` }} /></div>
+              <div className="po-pay-summary__grid">
+                <SummaryStat label={`Owed supplier (${header.currency})`} value={fmtNum(owed, 2)} />
+                <SummaryStat label={`Paid (${header.currency})`} value={fmtNum(paid, 2)} />
+                <SummaryStat
+                  label={`Outstanding (${header.currency})`}
+                  value={fmtNum(out, 2)}
+                  tone={out > 0.005 ? 'amber' : out < -0.005 ? 'rose' : 'emerald'}
+                  emphasis
+                />
+                <SummaryStat label="Paid (USD, actual)" value={fmtUsd(ps.paidUsd)} />
+                <SummaryStat label="TT / bank fees (USD)" value={fmtUsd(ps.ttFeesUsd)} />
+                {ps.plannedCount > 0 && (
+                  <SummaryStat label="Planned (not sent)" value={`${ps.plannedCount}`} tone="sky" />
+                )}
+              </div>
+            </div>
+          );
+        })()}
+
+        {(!detail.payments || detail.payments.length === 0) ? (
+          <EmptyState
+            title="No payments recorded"
+            body="Record each TT / wire you send the supplier — deposit, balance, etc. — to track what's paid vs outstanding."
+          />
+        ) : (
+          <div className="pos-table-wrap">
+            <table className="pos-table">
+              <thead>
+                <tr>
+                  <th>Type</th>
+                  <th>Status</th>
+                  <th>Date</th>
+                  <th className="ralign">Amount ({header.currency})</th>
+                  <th className="ralign">FX → USD</th>
+                  <th className="ralign">Amount (USD)</th>
+                  <th className="ralign">TT fee (USD)</th>
+                  <th>Reference</th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody>
+                {detail.payments.map((p) => (
+                  <tr key={p.id} className={p.status === 'planned' ? 'pos-row--planned' : ''}>
+                    <td>{(PAYMENT_KINDS.find((k) => k.value === p.kind) || {}).label || p.kind}</td>
+                    <td>
+                      <Badge tone={p.status === 'confirmed' ? 'emerald' : p.status === 'paid' ? 'sky' : 'slate'}>
+                        {PAYMENT_TT_STATUS_LABEL(p.status)}
+                      </Badge>
+                    </td>
+                    <td>{fmtDate(p.paidAt)}</td>
+                    <td className="ralign">{fmtNum(p.amountSupplierCurrency, 2)}</td>
+                    <td className="ralign">{Number(p.fxRateToUsd || 0).toFixed(4)}</td>
+                    <td className="ralign">{fmtUsd(p.amountUsd)}</td>
+                    <td className="ralign">
+                      {fmtUsd(p.ttFeeUsd)}
+                      {p.ttFeeInLanded && p.ttFeeUsd > 0 ? <span className="po-pay-landed-dot" title="Included in landed cost"> •</span> : null}
+                    </td>
+                    <td>{p.reference || <span className="muted">—</span>}</td>
+                    <td className="ralign">
+                      <Button variant="ghost" onClick={() => setEditingPayment(p)}>Edit</Button>
+                      <Button variant="ghost" onClick={() => removePayment(p)}>×</Button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </section>
+
       {/* Summary. */}
       <section className="po-section po-summary">
         <h3 className="po-section__title">Landed cost summary</h3>
@@ -492,6 +665,26 @@ export function PODetail({ poId, onBack }) {
           component={editingComponent}
           onCancel={() => setEditingComponent(null)}
           onSave={(patch) => updateComponent(editingComponent.id, patch)}
+        />
+      )}
+      {addingPayment && (
+        <PaymentModal
+          mode="create"
+          currency={header.currency}
+          defaultFxRate={header.exchangeRateToUsd}
+          outstanding={detail.paymentSummary?.outstandingSupplier}
+          onCancel={() => setAddingPayment(false)}
+          onSave={addPayment}
+        />
+      )}
+      {editingPayment && (
+        <PaymentModal
+          mode="edit"
+          currency={header.currency}
+          defaultFxRate={header.exchangeRateToUsd}
+          payment={editingPayment}
+          onCancel={() => setEditingPayment(null)}
+          onSave={(patch) => updatePayment(editingPayment.id, patch)}
         />
       )}
     </div>
@@ -719,7 +912,126 @@ function ComponentModal({ mode, currency, incoterm, component, onCancel, onSave 
   );
 }
 
+function PaymentModal({ mode, currency, defaultFxRate, payment, outstanding, onCancel, onSave }) {
+  const initial = payment || {};
+  const isUsd = String(currency).toUpperCase() === 'USD';
+  const [kind, setKind]       = useState(initial.kind || 'deposit');
+  // In create mode, prefill the amount with the outstanding balance so
+  // "pay the balance" is one click. Edit mode shows the stored amount.
+  const [amount, setAmount]   = useState(
+    initial.amountSupplierCurrency != null
+      ? initial.amountSupplierCurrency
+      : (outstanding && outstanding > 0 ? Math.round(outstanding * 100) / 100 : ''),
+  );
+  const [fxRate, setFxRate]   = useState(
+    initial.fxRateToUsd != null ? initial.fxRateToUsd : (isUsd ? 1 : (defaultFxRate || '')),
+  );
+  const [ttFee, setTtFee]     = useState(initial.ttFeeUsd ?? '');
+  const [ttFeeInLanded, setTtFeeInLanded] = useState(!!initial.ttFeeInLanded);
+  const [status, setStatus]   = useState(initial.status || 'paid');
+  const [reference, setRef]   = useState(initial.reference || '');
+  const [paidAt, setPaidAt]   = useState(tsToDateInput(initial.paidAt) || todayInput());
+  const [notes, setNotes]     = useState(initial.notes || '');
+
+  const amtNum = Number(amount) || 0;
+  const fxNum = Number(fxRate) || 0;
+  const usdPreview = amtNum * fxNum;
+
+  function submit() {
+    onSave({
+      kind,
+      amountSupplierCurrency: amtNum,
+      fxRateToUsd: fxNum || (isUsd ? 1 : 0),
+      ttFeeUsd: Number(ttFee) || 0,
+      ttFeeInLanded,
+      status,
+      reference: reference.trim() || null,
+      paidAt: dateInputToTs(paidAt),
+      notes,
+    });
+  }
+  const canSubmit = amount !== '' && amtNum >= 0 && (isUsd || fxNum > 0);
+
+  return (
+    <div className="modal-backdrop" onClick={onCancel}>
+      <div className="modal modal--md" onClick={(e) => e.stopPropagation()}>
+        <header className="modal__header">
+          <h2>{mode === 'create' ? 'Record payment' : 'Edit payment'}</h2>
+          <button className="modal__close" aria-label="Close (Esc)" title="Close (Esc)" onClick={onCancel}>×</button>
+        </header>
+        <div className="modal__body">
+          <div className="form-grid">
+            <label className="field">
+              <span className="field__label">Type *</span>
+              <Select value={kind} onChange={(e) => setKind(e.target.value)}>
+                {PAYMENT_KINDS.map((k) => <option key={k.value} value={k.value}>{k.label}</option>)}
+              </Select>
+            </label>
+            <label className="field">
+              <span className="field__label">Status *</span>
+              <Select value={status} onChange={(e) => setStatus(e.target.value)}>
+                {PAYMENT_STATUSES.map((s) => <option key={s.value} value={s.value}>{s.label}</option>)}
+              </Select>
+              <span className="field__hint">Planned = scheduled but not wired yet (doesn’t count as paid).</span>
+            </label>
+            <label className="field">
+              <span className="field__label">Amount ({currency}) *</span>
+              <Input type="number" min="0" step="0.01" value={amount} onChange={(e) => setAmount(e.target.value)} />
+            </label>
+            <label className="field">
+              <span className="field__label">FX rate (1 {currency} = ? USD)</span>
+              <Input
+                type="number" min="0" step="0.0001"
+                value={fxRate}
+                disabled={isUsd}
+                onChange={(e) => setFxRate(e.target.value)}
+              />
+              <span className="field__hint">
+                {isUsd ? 'USD PO — no conversion.' : `= ${fmtUsd(usdPreview)} USD for this payment.`}
+              </span>
+            </label>
+            <label className="field">
+              <span className="field__label">TT / bank fee (USD)</span>
+              <Input type="number" min="0" step="0.01" value={ttFee} onChange={(e) => setTtFee(e.target.value)} />
+            </label>
+            <label className="field" style={{ justifyContent: 'flex-end' }}>
+              <span className="po-pay-check">
+                <input type="checkbox" checked={ttFeeInLanded} onChange={(e) => setTtFeeInLanded(e.target.checked)} />
+                <span>Include this fee in landed cost</span>
+              </span>
+              <span className="field__hint">Off = tracked as a separate cash expense only.</span>
+            </label>
+            <label className="field">
+              <span className="field__label">Date sent</span>
+              <Input type="date" value={paidAt} onChange={(e) => setPaidAt(e.target.value)} />
+            </label>
+            <label className="field">
+              <span className="field__label">TT / wire reference</span>
+              <Input value={reference} onChange={(e) => setRef(e.target.value)} placeholder="e.g. TT-20260607-001" />
+            </label>
+            <label className="field field--full">
+              <span className="field__label">Notes</span>
+              <Textarea value={notes} onChange={(e) => setNotes(e.target.value)} />
+            </label>
+          </div>
+        </div>
+        <footer className="modal__footer">
+          <Button variant="ghost" onClick={onCancel}>Cancel</Button>
+          <Button variant="primary" onClick={submit} disabled={!canSubmit}>Save</Button>
+        </footer>
+      </div>
+    </div>
+  );
+}
+
 /* ─── utils ─────────────────────────────────────────────────────── */
+
+function todayInput() {
+  // Build from the existing tsToDateInput so we never call Date.now in a
+  // way that surprises tests; here in the renderer it's fine.
+  const d = new Date();
+  return d.toISOString().slice(0, 10);
+}
 
 function fmtUsd(n, decimals = 2) {
   const v = Number(n) || 0;
@@ -739,4 +1051,9 @@ function dateInputToTs(s) {
   if (!s) return null;
   const d = new Date(s);
   return Number.isNaN(d.getTime()) ? null : d.getTime();
+}
+function fmtDate(ts) {
+  if (!ts) return '—';
+  const d = new Date(ts);
+  return Number.isNaN(d.getTime()) ? '—' : d.toLocaleDateString();
 }

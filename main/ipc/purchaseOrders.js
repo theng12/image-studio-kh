@@ -36,6 +36,12 @@ function register({ expose }) {
   expose('pos:updateComponent',      ({ componentId, patch } = {}) => purchaseOrders.updateComponent(componentId, patch ?? {}));
   expose('pos:removeComponent',      (componentId) => purchaseOrders.removeComponent(componentId));
 
+  // v0.49.50: TT / payment ledger.
+  expose('pos:listPayments',         (poId) => purchaseOrders.listPayments(poId));
+  expose('pos:addPayment',           ({ poId, input } = {}) => purchaseOrders.addPayment(poId, input ?? {}));
+  expose('pos:updatePayment',        ({ paymentId, patch } = {}) => purchaseOrders.updatePayment(paymentId, patch ?? {}));
+  expose('pos:removePayment',        (paymentId) => purchaseOrders.removePayment(paymentId));
+
   // v0.49.47: pricing helpers exposed so the Cost Calculator + Library
   // can compute suggested retail without a backend round-trip per
   // keystroke. Pure math; no DB access; safe to call from any role.

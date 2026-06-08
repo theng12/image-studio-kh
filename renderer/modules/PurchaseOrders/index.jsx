@@ -28,7 +28,7 @@ import { useAppStore } from '../../store/index.js';
 import { Button, EmptyState, Pagination, paginate, Badge, Select, Input } from '../../components/ui.jsx';
 import { PageHeader } from '../../components/PageHeader.jsx';
 import { confirm } from '../../components/ConfirmModal.jsx';
-import { PODetail } from './PODetail.jsx';
+import { PODetail, PAYMENT_STATUS_TONE, PAYMENT_STATUS_LABEL } from './PODetail.jsx';
 
 const STATUS_FILTERS = [
   { value: 'all',        label: 'All' },
@@ -238,6 +238,7 @@ export function PurchaseOrders() {
                     <th>PO #</th>
                     <th>Supplier</th>
                     <th>Status</th>
+                    <th>Payment</th>
                     <th>Incoterm</th>
                     <th>Currency</th>
                     <th className="ralign">Lines</th>
@@ -258,6 +259,11 @@ export function PurchaseOrders() {
                       <td><strong>{po.poNumber || '(no number)'}</strong></td>
                       <td>{po.supplierName || '—'}</td>
                       <td><Badge tone={STATUS_TONE(po.status)}>{STATUS_LABEL(po.status)}</Badge></td>
+                      <td>
+                        {po.paymentStatus
+                          ? <Badge tone={PAYMENT_STATUS_TONE(po.paymentStatus)}>{PAYMENT_STATUS_LABEL(po.paymentStatus)}</Badge>
+                          : <span className="muted">—</span>}
+                      </td>
                       <td>{po.incoterm || '—'}</td>
                       <td>{po.currency || '—'}</td>
                       <td className="ralign">{po.linesCount || 0}</td>

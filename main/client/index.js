@@ -661,6 +661,7 @@ const PROXIED_CHANNELS = [
   'pos:create','pos:update','pos:setStatus','pos:remove',
   'pos:addLine','pos:updateLine','pos:removeLine',
   'pos:addComponent','pos:updateComponent','pos:removeComponent',
+  'pos:listPayments','pos:addPayment','pos:updatePayment','pos:removePayment',
   // Pure math — could run client-side, but proxying keeps the formula
   // logic centralised + lets us patch it server-side without re-shipping
   // the client.

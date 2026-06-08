@@ -292,6 +292,11 @@ contextBridge.exposeInMainWorld('api', {
     addComponent:     (poId, input)               => invoke('pos:addComponent', { poId, input }),
     updateComponent:  (componentId, patch)        => invoke('pos:updateComponent', { componentId, patch }),
     removeComponent:  (componentId)               => invoke('pos:removeComponent', componentId),
+    // v0.49.50: TT / payment ledger
+    listPayments:     (poId)                      => invoke('pos:listPayments', poId),
+    addPayment:       (poId, input)               => invoke('pos:addPayment', { poId, input }),
+    updatePayment:    (paymentId, patch)          => invoke('pos:updatePayment', { paymentId, patch }),
+    removePayment:    (paymentId)                 => invoke('pos:removePayment', paymentId),
   },
   /** v0.49.47: pure-math costing helpers — suggested retail from a target
    *  margin, realized margin from a retail price, container fill %. Used

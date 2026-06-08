@@ -2,6 +2,20 @@ import { Modal } from './ui.jsx';
 
 const CHANGELOG = [
   {
+    version: '0.49.50',
+    date: '2026-06-08',
+    items: [
+      'NEW — **Payments & TT tracking on every Purchase Order.** A new "Payments" section on the PO detail page lets you record each wire transfer to the supplier: type (deposit / balance / partial / final / other), amount, the date sent, a TT/wire reference number, the bank fee, and a status (Planned → Paid → Confirmed by supplier). So you can see at a glance: have I paid? did I send the deposit? is the balance still due?',
+      'NEW — **Payment summary card** on each PO — Owed · Paid · Outstanding (in the supplier\'s currency), a progress bar, total TT fees, and a colour-coded **payment status badge**: Unpaid → Deposit paid → Partially paid → Paid in full. The same badge shows on the PO list, next to the goods-status badge — so the list answers your exact question: *“deposit paid, goods still in production”* vs *“paid in full, shipped.”*',
+      'Reconciles against the **supplier goods value** (what you actually wire the factory at the Incoterm price) — NOT the full landed cost. Freight, duty, and local clearance are paid to other parties (the shipping line, customs), so they don\'t count toward what you owe the supplier. “Paid in full” means the factory is paid.',
+      'NEW — **Per-payment exchange rate.** A deposit and the balance often settle weeks apart at different rates, so each TT records its own FX rate and the actual USD that left your account. The PO\'s USD totals reflect the real rates you paid, not a single snapshot.',
+      'NEW — **Per-payment TT-fee choice.** Each wire fee has a checkbox: include it in landed cost (spreads across the goods, nudging unit cost up) or track it as a separate cash expense (default). Fees folded into landed cost get a small dot marker in the table; they only count once the payment is actually Paid/Confirmed (Planned payments don\'t move cost yet).',
+      'Behaviour notes — **Planned** payments are scheduled-but-not-sent: they show in the ledger (dimmed) but don\'t count as paid and don\'t affect cost until you flip them to Paid. Recording a payment pre-fills the amount with the current outstanding balance, so “pay the balance” is one click. Editing the PO\'s line items (which changes what you owe) re-checks the payment status automatically.',
+      'Internal — new `po_payments` table (additive schema, no version bump) + cached `total_paid_supplier / total_paid_usd / total_tt_fees_usd / payment_status` on the PO header for cheap list rendering. New pure fn `landedCost.summarizePayments()` with 8 unit tests (deposit/partial/full/overpaid, planned-excluded, fee accounting). IPC `pos:listPayments / addPayment / updatePayment / removePayment`, proxied to client mode + role-gated. recomputeHeader ↔ payment-cache use a strict one-way edge so they can\'t recurse.',
+      'Verified: tests pass (145 total). Build clean.',
+    ],
+  },
+  {
     version: '0.49.49',
     date: '2026-06-07',
     items: [

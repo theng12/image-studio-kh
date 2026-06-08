@@ -215,6 +215,92 @@ test('incotermComponentWarnings — case-insensitive kind match', () => {
   assert.equal(w.length, 1);
 });
 
+/* ─── v0.49.50: payment / TT ledger summary ─────────────────────── */
+
+test('summarizePayments — no payments → unpaid, full outstanding', () => {
+  const s = lc.summarizePayments({ owedSupplier: 10000, payments: [] });
+  assert.equal(s.status, 'unpaid');
+  assert.equal(s.paidSupplier, 0);
+  assert.equal(s.outstandingSupplier, 10000);
+  assert.equal(s.pct, 0);
+});
+
+test('summarizePayments — a deposit under the total → deposit_paid', () => {
+  const s = lc.summarizePayments({
+    owedSupplier: 10000,
+    payments: [{ kind: 'deposit', amountSupplierCurrency: 3000, amountUsd: 3000, status: 'paid' }],
+  });
+  assert.equal(s.status, 'deposit_paid');
+  assert.equal(s.paidSupplier, 3000);
+  assert.equal(s.outstandingSupplier, 7000);
+  assert.ok(Math.abs(s.pct - 30) < 0.001);
+});
+
+test('summarizePayments — a non-deposit partial → partially_paid', () => {
+  const s = lc.summarizePayments({
+    owedSupplier: 10000,
+    payments: [{ kind: 'partial', amountSupplierCurrency: 4000, amountUsd: 4000, status: 'paid' }],
+  });
+  assert.equal(s.status, 'partially_paid');
+});
+
+test('summarizePayments — deposit + balance covering the total → paid_in_full', () => {
+  const s = lc.summarizePayments({
+    owedSupplier: 10000,
+    payments: [
+      { kind: 'deposit', amountSupplierCurrency: 3000, amountUsd: 3000, status: 'paid' },
+      { kind: 'balance', amountSupplierCurrency: 7000, amountUsd: 7050, status: 'confirmed' },
+    ],
+  });
+  assert.equal(s.status, 'paid_in_full');
+  assert.equal(s.paidSupplier, 10000);
+  assert.equal(s.outstandingSupplier, 0);
+  // USD totals reflect the actual (per-payment-rate) amounts.
+  assert.equal(s.paidUsd, 10050);
+});
+
+test('summarizePayments — overpay → overpaid', () => {
+  const s = lc.summarizePayments({
+    owedSupplier: 10000,
+    payments: [{ kind: 'final', amountSupplierCurrency: 11000, amountUsd: 11000, status: 'paid' }],
+  });
+  assert.equal(s.status, 'overpaid');
+});
+
+test('summarizePayments — planned payments do NOT count toward paid', () => {
+  const s = lc.summarizePayments({
+    owedSupplier: 10000,
+    payments: [
+      { kind: 'deposit', amountSupplierCurrency: 3000, amountUsd: 3000, status: 'paid' },
+      { kind: 'balance', amountSupplierCurrency: 7000, amountUsd: 7000, status: 'planned' },
+    ],
+  });
+  assert.equal(s.status, 'deposit_paid'); // only the deposit is actually paid
+  assert.equal(s.paidSupplier, 3000);
+  assert.equal(s.plannedCount, 1);
+});
+
+test('summarizePayments — TT fees: all summed; in-landed only from paid/confirmed', () => {
+  const s = lc.summarizePayments({
+    owedSupplier: 10000,
+    payments: [
+      { kind: 'deposit', amountSupplierCurrency: 3000, amountUsd: 3000, status: 'paid',    ttFeeUsd: 25, ttFeeInLanded: true },
+      { kind: 'balance', amountSupplierCurrency: 7000, amountUsd: 7000, status: 'planned', ttFeeUsd: 30, ttFeeInLanded: true },
+      { kind: 'partial', amountSupplierCurrency: 0,    amountUsd: 0,    status: 'paid',    ttFeeUsd: 15, ttFeeInLanded: false },
+    ],
+  });
+  assert.equal(s.ttFeesUsd, 70);          // 25 + 30 + 15, all recorded fees
+  assert.equal(s.ttFeesInLandedUsd, 25);  // only the paid in-landed one (planned excluded, non-landed excluded)
+});
+
+test('summarizePayments — owed 0 but money out → overpaid (not a crash)', () => {
+  const s = lc.summarizePayments({
+    owedSupplier: 0,
+    payments: [{ kind: 'deposit', amountSupplierCurrency: 500, amountUsd: 500, status: 'paid' }],
+  });
+  assert.equal(s.status, 'overpaid');
+});
+
 test('calculateLanded — degenerate: zero-priced lines do not crash on by_value', () => {
   // All lines at $0 → by_value can't allocate → flat fallback.
   const freeLineA = { ...LINE_A, unitPriceUsd: 0 };

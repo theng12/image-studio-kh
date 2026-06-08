@@ -50,6 +50,11 @@ function rowToPO(row) {
     totalWeightKg:       row.total_weight_kg,
     totalComponentsUsd:  row.total_components_usd,
     linesCount:          row.lines_count,
+    // v0.49.50 cached payment rollup — written by recomputePayments.
+    totalPaidSupplier:   row.total_paid_supplier,
+    totalPaidUsd:        row.total_paid_usd,
+    totalTtFeesUsd:      row.total_tt_fees_usd,
+    paymentStatus:       row.payment_status,
   };
 }
 
@@ -85,6 +90,26 @@ function rowToComponent(row) {
     amountUsd:                row.amount_usd,
     allocationBasis:          row.allocation_basis,
     notes:                    row.notes,
+  };
+}
+
+function rowToPayment(row) {
+  if (!row) return null;
+  return {
+    id:                      row.id,
+    poId:                    row.po_id,
+    kind:                    row.kind,
+    amountSupplierCurrency:  row.amount_supplier_currency,
+    fxRateToUsd:             row.fx_rate_to_usd,
+    amountUsd:               row.amount_usd,
+    ttFeeUsd:                row.tt_fee_usd,
+    ttFeeInLanded:           !!row.tt_fee_in_landed,
+    status:                  row.status,
+    reference:               row.reference,
+    paidAt:                  row.paid_at,
+    notes:                   row.notes,
+    createdAt:               row.created_at,
+    updatedAt:               row.updated_at,
   };
 }
 
@@ -162,6 +187,8 @@ function getDetail(id) {
   `).all(id).map((r) => ({ ...rowToLine(r), productSku: r.product_sku, productName: r.product_name }));
   const components = db.prepare(`SELECT * FROM po_cost_components WHERE po_id = ? ORDER BY rowid ASC`)
     .all(id).map(rowToComponent);
+  const payments = db.prepare(`SELECT * FROM po_payments WHERE po_id = ? ORDER BY COALESCE(paid_at, created_at) ASC`)
+    .all(id).map(rowToPayment);
 
   // Run the calculator so the UI gets per-line landed cost without
   // round-tripping. We use the values that landed in the cache the
@@ -169,6 +196,18 @@ function getDetail(id) {
   // here so a stale cache (concurrent edit, etc.) is overlaid by the
   // live answer. The cache is what we display in lists; the live
   // answer is what we show on the detail page.
+  const calcComponents = components.map((c) => ({
+    id: c.id, kind: c.kind, amountUsd: c.amountUsd, allocationBasis: c.allocationBasis,
+  }));
+  // v0.49.50: fold in-landed TT fees (paid/confirmed) into the live calc
+  // so the detail page's per-line landed cost matches the cache.
+  const ttFeeInLanded = payments
+    .filter((p) => p.ttFeeInLanded && (p.status === 'paid' || p.status === 'confirmed'))
+    .reduce((s, p) => s + (Number(p.ttFeeUsd) || 0), 0);
+  if (ttFeeInLanded > 0) {
+    calcComponents.push({ id: '__ttfee__', kind: 'tt_fee', amountUsd: ttFeeInLanded, allocationBasis: 'by_value' });
+  }
+
   const calc = landedCost.calculateLanded({
     lines: lines.map((l) => ({
       id: l.id,
@@ -180,9 +219,7 @@ function getDetail(id) {
       cartonDCm: l.cartonDCm,
       weightPerUnitKg: l.weightPerUnitKg,
     })),
-    components: components.map((c) => ({
-      id: c.id, kind: c.kind, amountUsd: c.amountUsd, allocationBasis: c.allocationBasis,
-    })),
+    components: calcComponents,
   });
   const calcByLine = new Map(calc.perLine.map((c) => [c.lineId, c]));
   const linesWithCalc = lines.map((l) => ({
@@ -197,7 +234,13 @@ function getDetail(id) {
   const incotermWarnings = landedCost.incotermComponentWarnings(header.incoterm, components);
   const warnings = [...calc.warnings, ...incotermWarnings];
 
-  return { header, lines: linesWithCalc, components, calc: calc.header, warnings, fillPct };
+  // v0.49.50: payment rollup against the supplier goods value.
+  const paymentSummary = landedCost.summarizePayments({
+    owedSupplier: header.totalValueSupplier || 0,
+    payments,
+  });
+
+  return { header, lines: linesWithCalc, components, payments, calc: calc.header, warnings, fillPct, paymentSummary };
 }
 
 function create(input, userId = null) {
@@ -523,6 +566,155 @@ function removeComponent(componentId, userId = null) {
   return getDetail(row.po_id);
 }
 
+/* ─── payments (TT ledger) ──────────────────────────────────────── */
+
+const VALID_PAYMENT_KINDS  = new Set(['deposit', 'balance', 'partial', 'final', 'other']);
+const VALID_PAYMENT_STATUS = new Set(['planned', 'paid', 'confirmed']);
+
+function addPayment(poId, input, userId = null) {
+  const po = get(poId);
+  if (!po) throw new Error('PO not found');
+  const db = getDb();
+  const now = Date.now();
+
+  const amountSupplier = Number(input.amountSupplierCurrency) || 0;
+  // Per-payment FX rate. Defaults to the PO's locked rate; the user can
+  // override per TT (deposit + balance often settle at different rates).
+  const fxRate = Number(input.fxRateToUsd) || Number(po.exchangeRateToUsd) || (po.currency === 'USD' ? 1 : 0);
+  const amountUsd = input.amountUsd != null && input.amountUsd !== ''
+    ? Number(input.amountUsd)
+    : amountSupplier * fxRate;
+
+  const id = `pay_${crypto.randomBytes(6).toString('hex')}`;
+  db.prepare(`
+    INSERT INTO po_payments (
+      id, po_id, kind, amount_supplier_currency, fx_rate_to_usd, amount_usd,
+      tt_fee_usd, tt_fee_in_landed, status, reference, paid_at, notes,
+      created_at, updated_at
+    ) VALUES (
+      @id, @poId, @kind, @amountSupplier, @fxRate, @amountUsd,
+      @ttFeeUsd, @ttFeeInLanded, @status, @reference, @paidAt, @notes,
+      @createdAt, @updatedAt
+    )
+  `).run({
+    id, poId,
+    kind: VALID_PAYMENT_KINDS.has(input.kind) ? input.kind : 'deposit',
+    amountSupplier,
+    fxRate,
+    amountUsd,
+    ttFeeUsd: Number(input.ttFeeUsd) || 0,
+    ttFeeInLanded: input.ttFeeInLanded ? 1 : 0,
+    status: VALID_PAYMENT_STATUS.has(input.status) ? input.status : 'paid',
+    reference: input.reference?.trim() || null,
+    paidAt: input.paidAt || now,
+    notes: input.notes?.trim() || null,
+    createdAt: now,
+    updatedAt: now,
+  });
+
+  recomputePayments(poId, userId);
+  return getDetail(poId);
+}
+
+const PAYMENT_PATCH = [
+  ['kind',                   'kind',                     (v) => (VALID_PAYMENT_KINDS.has(v) ? v : 'other')],
+  ['amountSupplierCurrency', 'amount_supplier_currency', Number],
+  ['fxRateToUsd',            'fx_rate_to_usd',           Number],
+  ['ttFeeUsd',               'tt_fee_usd',               (v) => Number(v) || 0],
+  ['ttFeeInLanded',          'tt_fee_in_landed',         (v) => (v ? 1 : 0)],
+  ['status',                 'status',                   (v) => (VALID_PAYMENT_STATUS.has(v) ? v : 'paid')],
+  ['reference',              'reference',                (v) => v?.trim() || null],
+  ['paidAt',                 'paid_at'],
+  ['notes',                  'notes',                    (v) => v?.trim() || null],
+];
+
+function updatePayment(paymentId, patch, userId = null) {
+  const db = getDb();
+  const row = db.prepare(`SELECT * FROM po_payments WHERE id = ?`).get(paymentId);
+  if (!row) throw new Error('Payment not found');
+
+  const sets = [];
+  const params = { id: paymentId, updatedAt: Date.now() };
+  for (const [key, col, fn] of PAYMENT_PATCH) {
+    if (key in (patch ?? {})) {
+      sets.push(`${col} = @${key}`);
+      params[key] = fn ? fn(patch[key]) : patch[key];
+    }
+  }
+  // Re-derive amount_usd whenever the supplier amount or FX rate changed
+  // (unless an explicit amountUsd was supplied).
+  if ('amountUsd' in (patch ?? {}) && patch.amountUsd !== '' && patch.amountUsd != null) {
+    sets.push(`amount_usd = @amountUsd`);
+    params.amountUsd = Number(patch.amountUsd);
+  } else if ('amountSupplierCurrency' in (patch ?? {}) || 'fxRateToUsd' in (patch ?? {})) {
+    const newAmount = 'amountSupplierCurrency' in patch ? Number(patch.amountSupplierCurrency) : row.amount_supplier_currency;
+    const newFx     = 'fxRateToUsd' in patch ? Number(patch.fxRateToUsd) : row.fx_rate_to_usd;
+    sets.push(`amount_usd = @amountUsd`);
+    params.amountUsd = (Number(newAmount) || 0) * (Number(newFx) || 0);
+  }
+  if (sets.length === 0) return getDetail(row.po_id);
+  sets.push(`updated_at = @updatedAt`);
+  db.prepare(`UPDATE po_payments SET ${sets.join(', ')} WHERE id = @id`).run(params);
+  recomputePayments(row.po_id, userId);
+  return getDetail(row.po_id);
+}
+
+function removePayment(paymentId, userId = null) {
+  const db = getDb();
+  const row = db.prepare(`SELECT po_id FROM po_payments WHERE id = ?`).get(paymentId);
+  if (!row) return null;
+  db.prepare(`DELETE FROM po_payments WHERE id = ?`).run(paymentId);
+  recomputePayments(row.po_id, userId);
+  return getDetail(row.po_id);
+}
+
+function listPayments(poId) {
+  if (!poId) return [];
+  return getDb().prepare(`SELECT * FROM po_payments WHERE po_id = ? ORDER BY COALESCE(paid_at, created_at) ASC`)
+    .all(poId).map(rowToPayment);
+}
+
+/**
+ * After a payment mutation: re-run the landed cost (an in-landed TT fee
+ * may have changed per-unit cost) — recomputeHeader also refreshes the
+ * payment cache at its tail. Then, if the PO is already received,
+ * refresh the affected products' cost cache so the snapshot tracks.
+ *
+ * NOTE: the payment-cache WRITE itself lives in recomputePaymentCache()
+ * and is called from the tail of recomputeHeader() — that one-way edge
+ * (header → payment cache, never the reverse) is what keeps these two
+ * from recursing into each other.
+ */
+function recomputePayments(poId, _userId = null) {
+  const po = get(poId);
+  if (!po) return;
+  recomputeHeader(poId);
+  if (po.status === 'received') refreshProductCostsForPO(poId);
+}
+
+/**
+ * Write ONLY the cached payment rollup columns on the header. Reads the
+ * already-current total_value_supplier (the amount owed the supplier) +
+ * the payment rows. Does not touch landed cost and never calls
+ * recomputeHeader — so it's safe to call from recomputeHeader's tail.
+ */
+function recomputePaymentCache(poId) {
+  const db = getDb();
+  const owedRow = db.prepare(`SELECT total_value_supplier FROM purchase_orders WHERE id = ?`).get(poId);
+  if (!owedRow) return;
+  const payments = listPayments(poId);
+  const summary = landedCost.summarizePayments({
+    owedSupplier: owedRow.total_value_supplier || 0,
+    payments,
+  });
+  db.prepare(`
+    UPDATE purchase_orders
+       SET total_paid_supplier = ?, total_paid_usd = ?,
+           total_tt_fees_usd = ?, payment_status = ?
+     WHERE id = ?
+  `).run(summary.paidSupplier, summary.paidUsd, summary.ttFeesUsd, summary.status, poId);
+}
+
 /* ─── recompute + product cost cache ────────────────────────────── */
 
 /**
@@ -540,6 +732,21 @@ function recomputeHeader(poId, _userId = null) {
   const lines = db.prepare(`SELECT * FROM po_lines WHERE po_id = ?`).all(poId).map(rowToLine);
   const components = db.prepare(`SELECT * FROM po_cost_components WHERE po_id = ?`).all(poId).map(rowToComponent);
 
+  // v0.49.50: TT/bank fees the user flagged "include in landed cost"
+  // (and that are actually paid) become a synthetic cost component
+  // allocated by value, so each unit's landed cost reflects them.
+  const calcComponents = components.map((c) => ({
+    id: c.id, kind: c.kind, amountUsd: c.amountUsd, allocationBasis: c.allocationBasis,
+  }));
+  const ttFeeInLanded = db.prepare(`
+    SELECT COALESCE(SUM(tt_fee_usd), 0) AS s
+      FROM po_payments
+     WHERE po_id = ? AND tt_fee_in_landed = 1 AND status IN ('paid', 'confirmed')
+  `).get(poId).s;
+  if (ttFeeInLanded > 0) {
+    calcComponents.push({ id: '__ttfee__', kind: 'tt_fee', amountUsd: ttFeeInLanded, allocationBasis: 'by_value' });
+  }
+
   const calc = landedCost.calculateLanded({
     lines: lines.map((l) => ({
       id: l.id,
@@ -551,9 +758,7 @@ function recomputeHeader(poId, _userId = null) {
       cartonDCm: l.cartonDCm,
       weightPerUnitKg: l.weightPerUnitKg,
     })),
-    components: components.map((c) => ({
-      id: c.id, kind: c.kind, amountUsd: c.amountUsd, allocationBasis: c.allocationBasis,
-    })),
+    components: calcComponents,
   });
 
   // Per-line cache.
@@ -562,8 +767,12 @@ function recomputeHeader(poId, _userId = null) {
     upd.run(l.allocatedCostUsdPerUnit, l.landedUnitCostUsd, l.lineId);
   }
 
-  // Header cache.
+  // Header cache. total_components_usd reflects only the REAL cost
+  // components (freight/duty/etc), NOT the synthetic in-landed TT fee —
+  // the fee changes per-line landed cost but shouldn't inflate the PO's
+  // component total or the supplier-spend rollup.
   const totalSupplier = lines.reduce((s, l) => s + (Number(l.qty) || 0) * (Number(l.unitPriceSupplierCurrency) || 0), 0);
+  const realComponentsUsd = components.reduce((s, c) => s + (Number(c.amountUsd) || 0), 0);
   db.prepare(`
     UPDATE purchase_orders
        SET total_value_supplier = ?, total_value_usd = ?,
@@ -575,10 +784,15 @@ function recomputeHeader(poId, _userId = null) {
     calc.header.totalValueUsd,
     calc.header.totalVolumeCbm,
     calc.header.totalWeightKg,
-    calc.header.totalComponentsUsd,
+    realComponentsUsd,
     lines.length,
     poId,
   );
+
+  // v0.49.50: owed-to-supplier (total_value_supplier) just changed, so
+  // refresh the payment rollup. One-way edge — recomputePaymentCache
+  // never calls back into recomputeHeader, so no recursion.
+  recomputePaymentCache(poId);
 }
 
 /**
@@ -752,6 +966,7 @@ module.exports = {
   list, get, getDetail, create, update, setStatus, remove,
   addLine, updateLine, removeLine,
   addComponent, updateComponent, removeComponent,
+  addPayment, updatePayment, removePayment, listPayments,
   recomputeHeader, recomputeProductCost,
   getProductCost, listProductCosts, supplierSpendRollup,
   listPosForSupplier, listPosForProduct,

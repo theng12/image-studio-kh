@@ -209,6 +209,12 @@ function initDb(dataDir) {
   addColumnIfMissing(db, 'purchase_orders', 'total_weight_kg',      'REAL');
   addColumnIfMissing(db, 'purchase_orders', 'total_components_usd', 'REAL');
   addColumnIfMissing(db, 'purchase_orders', 'lines_count',          'INTEGER');
+  // v0.49.50: cached payment rollup so the PO list can show a payment
+  // badge + outstanding amount without joining po_payments per row.
+  addColumnIfMissing(db, 'purchase_orders', 'total_paid_supplier',  'REAL');
+  addColumnIfMissing(db, 'purchase_orders', 'total_paid_usd',       'REAL');
+  addColumnIfMissing(db, 'purchase_orders', 'total_tt_fees_usd',    'REAL');
+  addColumnIfMissing(db, 'purchase_orders', 'payment_status',       'TEXT');
 
   addColumnIfMissing(db, 'products', 'carton_qty',         'INTEGER');
   addColumnIfMissing(db, 'products', 'carton_w_cm',        'REAL');
@@ -701,6 +707,38 @@ function runMigrations(database) {
       notes TEXT
     );
     CREATE INDEX IF NOT EXISTS idx_po_cost_components_po ON po_cost_components(po_id);
+
+    /* v0.49.50: po_payments — the TT / wire-transfer ledger for a PO.
+       Each row is one payment to the supplier (deposit, balance, partial,
+       etc). Reconciled against the PO's GOODS value in the supplier's
+       currency (what you actually wire the factory — freight/duty/local
+       costs are paid to other parties, not the supplier). Each payment
+       carries its OWN exchange rate (deposit + balance often settle weeks
+       apart at different rates) and its own TT/bank fee, with a per-payment
+       flag for whether that fee rolls into landed cost. */
+    CREATE TABLE IF NOT EXISTS po_payments (
+      id    TEXT PRIMARY KEY,
+      po_id TEXT NOT NULL REFERENCES purchase_orders(id) ON DELETE CASCADE,
+      kind  TEXT NOT NULL DEFAULT 'deposit', -- 'deposit' | 'balance' | 'partial' | 'final' | 'other'
+      -- Amount wired, in the PO's supplier currency (matches the invoice).
+      amount_supplier_currency REAL NOT NULL DEFAULT 0,
+      -- Per-payment FX rate (1 supplier-ccy unit = N USD), captured at pay time.
+      fx_rate_to_usd           REAL NOT NULL DEFAULT 1.0,
+      -- The actual USD that left the account = amount × fx_rate (or entered
+      -- directly when the supplier invoices in USD).
+      amount_usd               REAL NOT NULL DEFAULT 0,
+      -- Bank / TT wire fee for this transfer, in USD.
+      tt_fee_usd               REAL NOT NULL DEFAULT 0,
+      -- 0/1: does this TT fee roll into the goods' landed cost (per-payment choice)?
+      tt_fee_in_landed         INTEGER NOT NULL DEFAULT 0,
+      status     TEXT NOT NULL DEFAULT 'paid', -- 'planned' | 'paid' | 'confirmed'
+      reference  TEXT,                          -- TT / wire reference number
+      paid_at    INTEGER,                       -- when the wire was sent
+      notes      TEXT,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_po_payments_po ON po_payments(po_id);
 
     /* product_landed_costs: derived/cache. Rebuilt when a PO
        transitions to 'received' (or via Recalculate). Keeping

@@ -304,12 +304,71 @@ function incotermComponentWarnings(incoterm, components) {
   return warnings;
 }
 
+/**
+ * v0.49.50 — summarise the TT/payment ledger for one PO against the
+ * amount owed to the SUPPLIER (the goods value in the supplier's
+ * currency — NOT the full landed cost; freight/duty are paid to other
+ * parties). Returns paid / outstanding totals + a payment status.
+ *
+ *   owedSupplier: number (PO goods value in supplier currency)
+ *   payments: [{ amountSupplierCurrency, amountUsd, ttFeeUsd,
+ *                ttFeeInLanded, kind, status }]
+ *
+ * Only 'paid' + 'confirmed' payments count toward the paid totals;
+ * 'planned' rows are scheduled-but-not-sent. TT fees that the user
+ * flagged in-landed (and are actually paid) are summed separately so
+ * the landed-cost calc can fold them in.
+ *
+ * status: 'unpaid' | 'deposit_paid' | 'partially_paid' | 'paid_in_full'
+ *         | 'overpaid'
+ */
+function summarizePayments({ owedSupplier, payments } = {}) {
+  const all = Array.isArray(payments) ? payments : [];
+  const counted = all.filter((p) => p.status === 'paid' || p.status === 'confirmed');
+  const paidSupplier = sum(counted.map((p) => p.amountSupplierCurrency));
+  const paidUsd = sum(counted.map((p) => p.amountUsd));
+  const ttFeesUsd = sum(all.map((p) => p.ttFeeUsd));
+  const ttFeesInLandedUsd = sum(
+    counted.filter((p) => p.ttFeeInLanded).map((p) => p.ttFeeUsd),
+  );
+  const owed = Number(owedSupplier) || 0;
+  const outstandingSupplier = owed - paidSupplier;
+  const pct = owed > 0 ? (paidSupplier / owed) * 100 : (paidSupplier > 0 ? 100 : 0);
+
+  const EPS = 0.005;
+  let status;
+  if (paidSupplier <= EPS) {
+    status = 'unpaid';
+  } else if (owed <= EPS) {
+    status = 'overpaid'; // money out but the PO has no goods value yet
+  } else if (paidSupplier >= owed - EPS) {
+    status = paidSupplier > owed + EPS ? 'overpaid' : 'paid_in_full';
+  } else {
+    const allDeposit = counted.length > 0 && counted.every((p) => p.kind === 'deposit');
+    status = allDeposit ? 'deposit_paid' : 'partially_paid';
+  }
+
+  return {
+    paidSupplier,
+    paidUsd,
+    ttFeesUsd,
+    ttFeesInLandedUsd,
+    owedSupplier: owed,
+    outstandingSupplier,
+    pct,
+    status,
+    paymentCount: all.length,
+    plannedCount: all.length - counted.length,
+  };
+}
+
 module.exports = {
   calculateLanded,
   containerFillPct,
   suggestedRetail,
   realizedMargin,
   incotermComponentWarnings,
+  summarizePayments,
   // exported for tests / advanced callers
   _internals: {
     cartonCbm, cartonsForLine, lineVolumeCbm, lineWeightKg, lineValueUsd,

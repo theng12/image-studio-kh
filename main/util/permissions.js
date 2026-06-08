@@ -73,6 +73,7 @@ const READ_CHANNELS = new Set([
   'pos:list', 'pos:get', 'pos:getDetail',
   'pos:listForSupplier', 'pos:listForProduct', 'pos:getProductCost',
   'pos:listProductCosts', 'pos:supplierSpendRollup',
+  'pos:listPayments',
   // Pure math — no DB access, no side effects, safe for every role.
   'costing:suggestedRetail', 'costing:realizedMargin', 'costing:containerFillPct',
 ]);

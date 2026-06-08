@@ -9532,6 +9532,55 @@ body[data-role="photographer"] .image-tile__nav-btn { display: none !important; 
   line-height: 1.45;
 }
 
+/* ───────────────────────────────────────────────────────────────────
+ *  v0.49.50 — PO payments (TT ledger): summary card, progress bar,
+ *  in-landed fee marker, planned-row dim, modal checkbox.
+ * ─────────────────────────────────────────────────────────────────── */
+.po-pay-summary {
+  border: 1px solid var(--c-border);
+  border-radius: 8px;
+  padding: var(--s-3) var(--s-4);
+  margin-bottom: var(--s-3);
+  background: var(--c-bg, #fff);
+}
+.po-pay-summary__top {
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+  margin-bottom: var(--s-2);
+}
+.po-pay-bar {
+  height: 8px;
+  border-radius: 999px;
+  background: var(--c-border, #e4e4e7);
+  overflow: hidden;
+  margin-bottom: var(--s-3);
+}
+.po-pay-bar__fill {
+  height: 100%;
+  background: #059669;
+  border-radius: 999px;
+  transition: width 200ms;
+}
+.po-pay-summary__grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: var(--s-2);
+}
+/* The "•" marker after a TT fee that's folded into landed cost. */
+.po-pay-landed-dot { color: var(--c-accent, #0a84ff); font-weight: 700; }
+/* Planned (not-yet-sent) payment rows read dimmer than actual ones. */
+.pos-row--planned td { opacity: 0.6; }
+/* Inline checkbox row inside the payment modal. */
+.po-pay-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  cursor: pointer;
+}
+.po-pay-check input { width: 15px; height: 15px; }
+
 /* Cost Calculator — two-column layout on wide screens, stack on narrow. */
 .costcalc__layout {
   display: grid;
