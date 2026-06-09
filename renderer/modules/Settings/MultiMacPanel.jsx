@@ -94,6 +94,11 @@ export function ServerModePanel({ config, addToast }) {
   // v0.14.1: inline add-user form replaces a broken window.prompt() that
   // Electron's BrowserWindow silently no-ops on.
   const [addForm, setAddForm] = useState(null); // null | { name, role }
+  // v0.49.51: role list for the user dropdowns (built-in + custom).
+  const [roles, setRoles] = useState([]);
+  useEffect(() => {
+    window.api.roles.list().then((r) => setRoles(Array.isArray(r) ? r : [])).catch(() => setRoles([]));
+  }, []);
   // v0.14.2: live server status (running / port / bind addresses).
   const [serverStatus, setServerStatus] = useState({ running: false });
   // v0.34.0: mobile/iPad web viewer toggle. Local mirror of the
@@ -341,10 +346,9 @@ export function ServerModePanel({ config, addToast }) {
                 <td>{u.name}</td>
                 <td>
                   <Select value={u.role} onChange={(e) => handleRoleChange(u.id, e.target.value)}>
-                    <option value="admin">admin — full control</option>
-                    <option value="editor">editor — edit catalog</option>
-                    <option value="photographer">photographer — add photos only</option>
-                    <option value="viewer">viewer — read-only</option>
+                    {roles.length === 0
+                      ? <option value={u.role}>{u.role}</option>
+                      : roles.map((r) => <option key={r.key} value={r.key}>{r.name}</option>)}
                   </Select>
                 </td>
                 <td>
@@ -382,10 +386,10 @@ export function ServerModePanel({ config, addToast }) {
               value={addForm.role}
               onChange={(e) => setAddForm((f) => ({ ...f, role: e.target.value }))}
             >
-              <option value="editor">editor — edit catalog</option>
-              <option value="admin">admin — full control</option>
-              <option value="photographer">photographer — add photos only</option>
-              <option value="viewer">viewer — read-only</option>
+              {(roles.length === 0
+                ? [{ key: 'editor', name: 'Editor' }, { key: 'admin', name: 'Admin' }, { key: 'photographer', name: 'Photographer' }, { key: 'viewer', name: 'Viewer' }]
+                : roles
+              ).map((r) => <option key={r.key} value={r.key}>{r.name}</option>)}
             </Select>
             <Button variant="primary" onClick={submitAdd} disabled={busy || !addForm.name.trim()}>
               {busy ? 'Creating…' : 'Create'}

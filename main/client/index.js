@@ -779,6 +779,8 @@ const NOT_YET_PORTABLE = [
   // Users / server controls — admin runs these on the server's own
   // Settings page, not on a client.
   'users:list','users:create','users:update','users:remove','users:regenerateToken','users:ensureOwner',
+  // v0.49.51: roles + permission matrix (admin manages on the server).
+  'roles:list','roles:get','roles:capabilities','roles:create','roles:update','roles:remove',
   'server:status','server:addresses','server:start','server:stop',
   // Settings — data folder lives locally.
   'settings:pickAndSetDataFolder','settings:changeDataFolder',

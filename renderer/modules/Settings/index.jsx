@@ -12,6 +12,7 @@ import { ModeSegment, ServerModePanel, ClientModePanel, RestartBanner, Migration
 // CrashLogPanel is used INSIDE AboutCard — no need to re-import it here.
 import { AboutCard } from './AboutPanel.jsx';
 import { BackupsPanel } from './BackupsPanel.jsx';
+import { RolesPanel } from './RolesPanel.jsx';
 import { BackupReminder } from '../../components/BackupReminder.jsx';
 
 // v0.22.13: Settings is now tabbed. SETTINGS_TABS is the source of
@@ -33,6 +34,8 @@ const SETTINGS_TABS = [
   // has no local data folder to back up — see visibleTabs below).
   { key: 'backups',     label: 'Backups' },
   { key: 'multi-mac',   label: 'Multi-Mac' },
+  // v0.49.51: custom roles + permission matrix.
+  { key: 'roles',       label: 'Roles & permissions' },
   { key: 'about',       label: 'About' },
 ];
 const SETTINGS_TAB_STORAGE_KEY = 'Settings.activeTab';
@@ -547,6 +550,12 @@ export function Settings() {
 
         {tab === 'backups' && config.mode !== 'client' && (
           <BackupsPanel config={config} />
+        )}
+
+        {tab === 'roles' && (
+        <div className="settings-page">
+          <RolesPanel addToast={addToast} />
+        </div>
         )}
 
         {tab === 'about' && (

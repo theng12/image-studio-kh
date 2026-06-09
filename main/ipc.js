@@ -25,6 +25,7 @@ const {
 const appDomain        = require('./ipc/app');
 const settingsDomain   = require('./ipc/settings');
 const usersDomain      = require('./ipc/users');
+const rolesDomain      = require('./ipc/roles');         // v0.49.51: custom roles + permission matrix
 const filesDomain      = require('./ipc/files');
 const catalogDomain    = require('./ipc/catalog');     // companies + brands + categories
 const productsDomain   = require('./ipc/products');
@@ -54,6 +55,7 @@ function registerIpc(_ctx) {
   appDomain.register(helpers);
   settingsDomain.register(helpers);
   usersDomain.register(helpers);
+  rolesDomain.register(helpers);            // v0.49.51
   filesDomain.register(helpers);
   catalogDomain.register(helpers);
   productsDomain.register(helpers);

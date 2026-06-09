@@ -339,6 +339,15 @@ function initDb(dataDir) {
     process.stderr.write(`[asset-recovery] failed: ${err.message}\n`);
   }
 
+  // v0.49.51: seed the built-in roles (admin/editor/photographer/viewer)
+  // if missing. Idempotent + non-destructive (won't clobber edited presets).
+  // Lazy require to avoid a load-time cycle with ./roles.
+  try {
+    require('./roles').ensureBuiltinRoles();
+  } catch (err) {
+    process.stderr.write(`[roles] seed failed: ${err.message}\n`);
+  }
+
   return db;
 }
 
@@ -765,11 +774,30 @@ function runMigrations(database) {
       id TEXT PRIMARY KEY,
       name TEXT NOT NULL,
       token TEXT NOT NULL UNIQUE,
-      role TEXT NOT NULL DEFAULT 'editor',  -- v0.45.0: 'admin' | 'editor' | 'photographer' | 'viewer'
+      role TEXT NOT NULL DEFAULT 'editor',  -- v0.45.0: role KEY. Built-ins: admin/editor/photographer/viewer; v0.49.51: also custom role keys.
       created_at INTEGER NOT NULL,
       last_seen_at INTEGER
     );
     CREATE INDEX IF NOT EXISTS idx_users_token ON users(token);
+
+    /* v0.49.51: custom roles. A role is a name + a set of capability keys
+       (see main/util/capabilities.js). The 4 built-ins are seeded on init
+       (ensureBuiltinRoles) to match the pre-v0.49.51 hardcoded behaviour.
+       The permissions column is a JSON array of capability keys; admin
+       carries the sentinel ["*"] (all access) and is_system=1 (cannot be
+       edited or deleted, so you cannot lock yourself out). The key column
+       is the stable slug stored on users.role; name is the display label. */
+    CREATE TABLE IF NOT EXISTS roles (
+      key         TEXT PRIMARY KEY,           -- stable slug, referenced by users.role
+      name        TEXT NOT NULL,              -- editable display name
+      description TEXT,
+      permissions TEXT NOT NULL DEFAULT '[]', -- JSON array of capability keys (or ["*"])
+      is_system   INTEGER NOT NULL DEFAULT 0, -- 1 = admin superuser; locked
+      is_builtin  INTEGER NOT NULL DEFAULT 0, -- 1 = seeded preset (editable but not deletable)
+      sort        INTEGER NOT NULL DEFAULT 0,
+      created_at  INTEGER NOT NULL,
+      updated_at  INTEGER NOT NULL
+    );
   `);
 
   database

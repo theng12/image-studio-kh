@@ -49,27 +49,23 @@ const NAV = [
     label: 'Production',
     items: [
       { id: 'library',   name: 'Product Library', icon: IconLibrary,   shortcut: '2' },
-      // The four below are all write-driven workflows — Viewer and
-      // Photographer can't usefully do anything inside them, so they're
-      // hidden rather than presented as dead links that 403 on every action.
-      { id: 'workspace', name: 'Image Workspace', icon: IconWorkspace, shortcut: '3', roleMin: 'editor' },
-      { id: 'aistudio',  name: 'AI Studio',       icon: IconAiStudio,  shortcut: '4', roleMin: 'editor' },
-      { id: 'overlay',   name: 'Overlay Studio',  icon: IconOverlay,   shortcut: '5', roleMin: 'editor' },
-      { id: 'export',    name: 'Export Center',   icon: IconExport,    shortcut: '6', roleMin: 'editor' },
+      // v0.49.51: gated by CAPABILITY (not role rank), so custom roles get
+      // the right nav. A module shows if the user has any of its `caps`.
+      { id: 'workspace', name: 'Image Workspace', icon: IconWorkspace, shortcut: '3', caps: ['images.manage'] },
+      { id: 'aistudio',  name: 'AI Studio',       icon: IconAiStudio,  shortcut: '4', caps: ['ai.run'] },
+      { id: 'overlay',   name: 'Overlay Studio',  icon: IconOverlay,   shortcut: '5', caps: ['overlay.use'] },
+      { id: 'export',    name: 'Export Center',   icon: IconExport,    shortcut: '6', caps: ['export.run'] },
     ],
   },
   {
-    // v0.49.46: OPERATIONS section. v0.49.46 shipped Suppliers; v0.49.47
-    // adds Purchase Orders + Cost Calculator. Hidden for viewer /
-    // photographer roles because cost data is the kind of thing they
-    // shouldn't see — the lowest role with access is editor. The whole
-    // section is dropped if every item inside it is gated out (see
-    // Sidebar render filter).
+    // v0.49.46: OPERATIONS section. Visible to any role with the
+    // 'View costs, suppliers & POs' capability (costing.view). The whole
+    // section is dropped if every item inside it is gated out.
     label: 'Operations',
     items: [
-      { id: 'suppliers',      name: 'Suppliers',       icon: IconSupplier, shortcut: '8', roleMin: 'editor' },
-      { id: 'purchaseorders', name: 'Purchase Orders', icon: IconPo,       shortcut: '9', roleMin: 'editor' },
-      { id: 'costcalc',       name: 'Cost Calculator', icon: IconCostCalc,                roleMin: 'editor' },
+      { id: 'suppliers',      name: 'Suppliers',       icon: IconSupplier, shortcut: '8', caps: ['costing.view'] },
+      { id: 'purchaseorders', name: 'Purchase Orders', icon: IconPo,       shortcut: '9', caps: ['costing.view'] },
+      { id: 'costcalc',       name: 'Cost Calculator', icon: IconCostCalc,                caps: ['costing.view'] },
     ],
   },
   {
@@ -78,17 +74,32 @@ const NAV = [
       // v0.26.31: global audit-log feed. Sits above Settings because
       // it's something users will visit often ("what did my assistant
       // change yesterday?") whereas Settings is a configure-once page.
-      { id: 'history',  name: 'History',  icon: IconHistory, shortcut: '7', roleMin: 'editor' },
+      { id: 'history',  name: 'History',  icon: IconHistory, shortcut: '7', caps: ['history.view'] },
       { id: 'settings', name: 'Settings', icon: IconSettings, shortcut: ',' },
     ],
   },
 ];
 
-// Lowest → highest. Used by both nav filtering and the body data-role attr
-// that downstream CSS gating in the Library / ProductForm keys off.
-const ROLE_RANK = { viewer: 1, photographer: 2, editor: 3, admin: 4 };
-function hasRoleAtLeast(role, min) {
-  return (ROLE_RANK[role] || 0) >= (ROLE_RANK[min] || 0);
+// v0.49.51: capability helpers. `caps` is the current user's capability
+// array (the server attaches it to the connection; the host is all-access).
+function hasCap(caps, key) {
+  if (!Array.isArray(caps)) return false;
+  return caps.includes('*') || caps.includes(key);
+}
+function hasAnyCap(caps, keys) {
+  if (!Array.isArray(keys) || keys.length === 0) return true; // ungated item
+  return keys.some((k) => hasCap(caps, k));
+}
+
+// Derive a legacy CSS tier (viewer/photographer/editor/admin) from a
+// capability set, so the existing body[data-role] CSS that hides write
+// affordances (Library bulk toolbar, ProductForm × buttons, …) keeps
+// working for CUSTOM roles too — they map to the closest tier.
+function capsToTier(caps) {
+  if (hasCap(caps, '*') || hasCap(caps, 'system.manage') || hasCap(caps, 'users.manage')) return 'admin';
+  if (hasCap(caps, 'products.edit') || hasCap(caps, 'images.manage') || hasCap(caps, 'costing.manage')) return 'editor';
+  if (hasCap(caps, 'images.add')) return 'photographer';
+  return 'viewer';
 }
 
 export function Sidebar() {
@@ -132,11 +143,18 @@ export function Sidebar() {
   // the role the server attached to our connection; defaults to 'admin'
   // while whoami is still loading so the nav doesn't briefly hide modules
   // a connected admin / editor will get back a moment later.
-  const role = appMode === 'client'
-    ? (clientConnection?.user?.role || 'admin')
-    : 'admin';
+  // v0.49.51: the current user's capability array. In client mode the
+  // server attaches it to the connection; the host Mac (standalone /
+  // server) is the implicit owner → all access. Default to all-access
+  // while whoami is still loading so the nav doesn't briefly hide modules
+  // a connected admin / editor will get back a moment later.
+  const caps = appMode === 'client'
+    ? (clientConnection?.user?.caps || ['*'])
+    : ['*'];
+  // Legacy tier for the body[data-role] CSS that hides write affordances.
+  const role = capsToTier(caps);
 
-  // Mirror the role to <body> so module-level CSS (Library bulk toolbar,
+  // Mirror the tier to <body> so module-level CSS (Library bulk toolbar,
   // ProductForm image × buttons, etc.) can hide write affordances without
   // every component having to re-derive it. Set/reset on every change so
   // a role switch (admin demotes a user mid-session) updates the UI cleanly.
@@ -182,7 +200,7 @@ export function Sidebar() {
               {section.label ? (
                 <div className="sidebar__section-label">{section.label}</div>
               ) : null}
-              {section.items.filter((item) => !item.roleMin || hasRoleAtLeast(role, item.roleMin)).map((item) => {
+              {section.items.filter((item) => hasAnyCap(caps, item.caps)).map((item) => {
                 const Icon = item.icon;
                 const active = activeModule === item.id;
                 const disabled = !isModuleAvailable(item.id);

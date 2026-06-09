@@ -149,6 +149,16 @@ contextBridge.exposeInMainWorld('api', {
     /** v0.15.3: currently-connected WebSocket clients (server only). */
     presence:           ()                     => invoke('users:presence'),
   },
+  /** v0.49.51: custom roles + permission matrix. Reads are open; writes
+   *  are gated to the 'Manage users & roles' capability (admin by default). */
+  roles: {
+    list:         ()              => invoke('roles:list'),
+    get:          (key)           => invoke('roles:get', key),
+    capabilities: ()              => invoke('roles:capabilities'),
+    create:       (input)         => invoke('roles:create', input),
+    update:       (key, patch)    => invoke('roles:update', { key, patch }),
+    remove:       (key)           => invoke('roles:remove', key),
+  },
   files: {
     pickFolder:    ()                          => invoke('files:pickFolder'),
     pickImageFile: (opts)                      => invoke('files:pickImageFile', opts ?? {}),

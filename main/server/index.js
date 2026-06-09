@@ -306,8 +306,11 @@ async function handleRequest(req, res, dataDir) {
   }
 
   if (req.method === 'GET' && urlPath === '/api/whoami') {
+    // v0.49.51: include the user's resolved capability list so the client
+    // can gate its UI by capability (custom roles have no fixed rank).
+    const { capsForRole } = require('../util/permissions');
     sendJson(res, 200, {
-      user: { id: user.id, name: user.name, role: user.role },
+      user: { id: user.id, name: user.name, role: user.role, caps: capsForRole(user.role) },
       registeredChannels: getRegisteredChannels(),
     });
     return;
@@ -455,9 +458,10 @@ function bootServer({ port, dataDir }) {
           // Greeting frame so the client knows the connection is
           // live before any catalog event fires.
           try {
+            const { capsForRole } = require('../util/permissions');
             ws.send(JSON.stringify({
               channel: 'server:hello',
-              payload: { user: { id: user.id, name: user.name, role: user.role } },
+              payload: { user: { id: user.id, name: user.name, role: user.role, caps: capsForRole(user.role) } },
             }));
           } catch (_) {}
           ws.on('close', () => {

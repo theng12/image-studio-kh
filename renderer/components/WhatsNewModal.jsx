@@ -2,6 +2,20 @@ import { Modal } from './ui.jsx';
 
 const CHANGELOG = [
   {
+    version: '0.49.51',
+    date: '2026-06-09',
+    items: [
+      'NEW — **Custom roles & permissions.** Roles are no longer fixed in code. In **Settings → Roles & permissions** you can create named roles and tick exactly which capabilities each one gets — e.g. a “Bookkeeper” who can manage POs and payments but can’t touch the catalog, or a “Junior editor” who can add products but not delete them.',
+      'The capabilities you tick (12 of them): Add / edit products · Delete products & images · Add / import images · Edit images · Manage brands & categories · Run AI generation · Use Overlay Studio · Run exports · View costs, suppliers & POs · Manage suppliers, POs & payments · View edit history · Manage users & roles · System & data settings. Anyone can still browse the catalog (that’s the baseline everyone has).',
+      'Your current roles still work, unchanged — **Admin / Editor / Photographer / Viewer** are seeded as starting points. Admin is a locked superuser (full access, can’t be edited or deleted, so you can never lock yourself out). Editor / Photographer / Viewer are editable presets — tweak them, or hit **Clone** to spin a new role off any of them and rename it.',
+      'The sidebar + write buttons now follow each role’s capabilities, so people only see what they can actually use. Assign roles to people in **Settings → Multi-Mac** (the role dropdown now lists your custom roles too).',
+      'Notable change: **cost visibility is now a permission.** Previously the OPERATIONS reads were open to everyone; now a role needs “View costs, suppliers & POs” to see them — so you can genuinely hide pricing from a photographer or viewer.',
+      'Enforced on the **server** (the real security boundary), so it takes effect once the server Mac is updated to v0.49.51 — manage roles from the host and clients pick them up on reconnect. Schema is additive (new `roles` table; no version bump), so your existing data + users open untouched.',
+      'Internal — new capability taxonomy (`main/util/capabilities.js`) maps every channel → one capability via ordered rules; `permissions.js` resolves a role’s caps from the DB and falls back to the legacy v0.45.0 logic for any unmapped channel (so nothing silently breaks). 16 new unit tests on the capability mapping + the gate. whoami / server:hello now attach the user’s resolved caps so the client gates its UI without a fixed role rank.',
+      'Verified: tests pass (161 total). Build clean.',
+    ],
+  },
+  {
     version: '0.49.50',
     date: '2026-06-08',
     items: [

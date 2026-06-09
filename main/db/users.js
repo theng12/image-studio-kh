@@ -71,11 +71,10 @@ function getByName(name) {
 function create({ name, role = 'editor' }) {
   const trimmed = (name ?? '').trim();
   if (!trimmed) throw new Error('User name is required');
-  // v0.45.0: roles now include 'photographer' and 'viewer' alongside
-  // 'admin' and 'editor'. The server-side ACL (main/util/permissions.js)
-  // is the single source of truth for what each role can do.
-  const { ROLES } = require('../util/permissions');
-  if (!ROLES.includes(role)) {
+  // v0.49.51: role is a key into the `roles` table (built-in OR custom).
+  // Validate against existing roles so a typo can't create an orphaned
+  // user. The server-side ACL (permissions.js) resolves the role's caps.
+  if (!require('./roles').get(role)) {
     throw new Error(`Invalid role: ${role}`);
   }
   if (getByName(trimmed)) {
@@ -112,9 +111,8 @@ function update(id, patch) {
     sets.push('name = @name');
     params.name = next;
   }
-  // v0.45.0: accept the full ROLES set (admin / editor / photographer / viewer).
-  const { ROLES } = require('../util/permissions');
-  if ('role' in patch && ROLES.includes(patch.role)) {
+  // v0.49.51: role is any existing role key (built-in or custom).
+  if ('role' in patch && require('./roles').get(patch.role)) {
     sets.push('role = @role');
     params.role = patch.role;
   }
