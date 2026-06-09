@@ -293,8 +293,23 @@ async function rpc(channel, args) {
       throw new Error('Token rejected by server. Ask the admin to regenerate.');
     }
     if (!res.ok) {
-      const msg = body?.error || `Server returned ${res.status}`;
+      let msg = body?.error || `Server returned ${res.status}`;
       _syncStats.errorCount += 1;
+      // A 404 "Unknown channel: X" means the SERVER is on an older build
+      // that doesn't have this channel — almost always a client that was
+      // updated ahead of the server after a feature release (e.g. the
+      // OPERATIONS / costing channels landed in v0.49.46+). Rewrite the
+      // raw server error into an actionable one that names the version
+      // gap, instead of showing the user "Unknown channel: suppliers:list".
+      if (res.status === 404 && /^Unknown channel:/.test(String(msg))) {
+        const sv = _connectionState.serverVersion;
+        const cv = app.getVersion();
+        msg =
+          `This feature needs a newer version on the server. ` +
+          `The server Mac is running ${sv ? `v${sv}` : 'an older version'}, which doesn’t have it yet — ` +
+          `update Image Studio KH on the server to v${cv} (install the DMG there, then quit and reopen it). ` +
+          `Existing features keep working; only newer ones are missing until the server matches.`;
+      }
       // Don't flip connection state on per-call errors (e.g. "Product not
       // found" is a 500 — the server itself is fine). Only network/auth
       // failures count as disconnection.
