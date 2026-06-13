@@ -162,6 +162,7 @@ contextBridge.exposeInMainWorld('api', {
   files: {
     pickFolder:    ()                          => invoke('files:pickFolder'),
     pickImageFile: (opts)                      => invoke('files:pickImageFile', opts ?? {}),
+    scanImageFiles:(folderPath)                => invoke('files:scanImageFiles', folderPath),
     pickWorkbook:  ()                          => invoke('files:pickWorkbook'),
     parseWorkbook: (filePath)                  => invoke('files:parseWorkbook', filePath),
     /** Returns a data: URL with a 160×160 cover thumbnail for the given
@@ -400,6 +401,9 @@ contextBridge.exposeInMainWorld('api', {
       invoke('templates:applyBulk', { templateId, productIds, destination, scope }),
     applyByFilter: ({ templateId, filters, destination, dryRun, scope } = {}) =>
       invoke('templates:applyByFilter', { templateId, filters, destination, dryRun, scope }),
+    // v0.49.53: watermark external image files (no products). Local-only.
+    applyToExternal: ({ templateId, inputPaths, outputFolder } = {}) =>
+      invoke('templates:applyToExternal', { templateId, inputPaths, outputFolder }),
   },
   ai: {
     listModels:    ()                                 => invoke('ai:listModels'),

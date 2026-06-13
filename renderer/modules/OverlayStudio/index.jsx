@@ -4,6 +4,7 @@ import { Button, EmptyState } from '../../components/ui.jsx';
 import { PageHeader } from '../../components/PageHeader.jsx';
 import { TemplateList } from './TemplateList.jsx';
 import { TemplateEditor } from './TemplateEditor.jsx';
+import { ExternalWatermarkModal } from './ExternalWatermarkModal.jsx';
 
 /**
  * Overlay Studio router.
@@ -24,6 +25,11 @@ export function OverlayStudio() {
   const activeCompanyId = useAppStore((s) => s.activeCompanyId);
   const setActiveModule = useAppStore((s) => s.setActiveModule);
   const addToast = useAppStore((s) => s.addToast);
+
+  // v0.49.53: "Watermark external photos" — local-only batch tool, so
+  // hidden in client mode (file paths live on the host's disk).
+  const appMode = useAppStore((s) => s.appMode);
+  const [externalOpen, setExternalOpen] = useState(false);
 
   const [templates, setTemplates] = useState([]);
   const [editingId, setEditingId] = useState(null);  // null = list view; uuid = editor view
@@ -129,11 +135,20 @@ export function OverlayStudio() {
         title="Overlay Studio"
         subtitle={subtitleList}
         actions={
-          <Button variant="primary" onClick={handleCreate}>
-            + New template
-          </Button>
+          <div style={{ display: 'flex', gap: 8 }}>
+            {appMode !== 'client' && templates.length > 0 && (
+              <Button variant="ghost" onClick={() => setExternalOpen(true)}>
+                Watermark external photos…
+              </Button>
+            )}
+            <Button variant="primary" onClick={handleCreate}>
+              + New template
+            </Button>
+          </div>
         }
       />
+
+      <ExternalWatermarkModal open={externalOpen} onClose={() => setExternalOpen(false)} />
 
       {loading ? (
         <EmptyState title="Loading templates…" />

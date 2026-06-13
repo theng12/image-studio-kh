@@ -8,6 +8,7 @@
  */
 
 const fs = require('node:fs');
+const path = require('node:path');
 const { ipcMain, dialog } = require('electron');
 const fileHandler = require('../fileHandler');
 
@@ -49,6 +50,31 @@ function register(/* helpers — unused */) {
     });
     if (res.canceled || res.filePaths.length === 0) return null;
     return multiple ? res.filePaths : res.filePaths[0];
+  });
+
+  /**
+   * v0.49.53: scan a folder for image files (top level + one level of
+   * subfolders) and return their absolute paths. Used by the "Watermark
+   * external photos" batch tool so a user can drop a whole folder in
+   * rather than multi-selecting files. Skips hidden files/dotfolders.
+   */
+  ipcMain.handle('files:scanImageFiles', async (_e, folderPath) => {
+    if (!folderPath || typeof folderPath !== 'string') throw new Error('folderPath required');
+    const IMG = new Set(['.jpg', '.jpeg', '.png', '.webp', '.heic', '.heif']);
+    const out = [];
+    function scan(dir, depth) {
+      let entries;
+      try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return; }
+      for (const e of entries) {
+        if (e.name.startsWith('.')) continue;
+        const full = path.join(dir, e.name);
+        if (e.isDirectory()) { if (depth < 1) scan(full, depth + 1); }
+        else if (IMG.has(path.extname(e.name).toLowerCase())) out.push(full);
+      }
+    }
+    scan(folderPath, 0);
+    out.sort();
+    return out;
   });
 
   ipcMain.handle('files:pickWorkbook', async () => {

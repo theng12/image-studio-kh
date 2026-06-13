@@ -2,6 +2,17 @@ import { Modal } from './ui.jsx';
 
 const CHANGELOG = [
   {
+    version: '0.49.53',
+    date: '2026-06-13',
+    items: [
+      'NEW — **Watermark external photos** (Overlay Studio → "Watermark external photos…", top right). Apply an overlay template to photos sitting on your disk — no need to create products for them. Pick a template, add photos (individual files or a whole folder), choose an output folder, and each photo is stamped with the overlay and saved as a copy. Great for one-off jobs like watermarking a batch of personal photos.',
+      'Outputs keep each photo’s original format (a JPG stays a JPG, so file sizes stay sensible) and the originals are never touched — watermarked copies are written to the folder you pick, named "<photo>-<template>.jpg". Add-folder scans the folder (and one level of subfolders) for images.',
+      'Note — this is for **logo / text watermark** templates: product-specific elements (SKU, barcode, brand) render blank on external photos since there’s no product behind them. It’s a local-only tool (the files are on this Mac’s disk), so it appears in standalone / host mode, not on a remote client.',
+      'Internal — new `templates:applyToExternal` (compose → re-encode to source format → write to output folder, with progress events) + `files:scanImageFiles` folder scanner. Reuses the existing template renderer; no schema change.',
+      'Verified: tests pass (161 total). Build clean.',
+    ],
+  },
+  {
     version: '0.49.52',
     date: '2026-06-10',
     items: [

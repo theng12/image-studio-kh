@@ -294,6 +294,84 @@ function register({ expose, emitCatalogChange }) {
    * Records one row in image_template_runs per BATCH (not per
    * product) so the History panel doesn't drown in noise.
    */
+  /**
+   * v0.49.53: apply a template to arbitrary image FILES on disk — no
+   * products involved (e.g. watermarking a folder of personal photos).
+   * Composes each input, re-encodes to the source format, writes to an
+   * output folder. Local-only: file paths are on this machine's disk, so
+   * the renderer gates this to standalone / host mode.
+   *
+   *   { templateId, inputPaths: [abs file paths], outputFolder }
+   * Returns { done, failed, total, outputFolder }.
+   */
+  expose('templates:applyToExternal', async ({ templateId, inputPaths, outputFolder } = {}) => {
+    if (!templateId) throw new Error('templateId required');
+    if (!Array.isArray(inputPaths) || inputPaths.length === 0) throw new Error('Pick at least one image');
+    if (inputPaths.length > 2000) throw new Error('Too many files (max 2000 per batch).');
+    if (typeof outputFolder !== 'string' || !outputFolder.trim()) throw new Error('Pick an output folder');
+
+    const template = imageTemplates.get(templateId);
+    if (!template) throw new Error('Template not found');
+
+    const events = require('../events');
+    const { slugify } = require('../util/slug');
+    await fs.promises.mkdir(outputFolder, { recursive: true });
+
+    // External images have no product, so token-based text/barcode
+    // elements (SKU, barcode, brand) render empty — a watermark template
+    // (logo / static text) is the intended use. Neutral context.
+    const ctx = {
+      sku: '', name: '', brand: '', brandIcon: null, barcode: '',
+      colorFinish: '', category: '', description: '', priceRetail: null, priceWholesale: null,
+    };
+
+    const done = [];
+    const failed = [];
+    const total = inputPaths.length;
+    const opId = `overlay-external-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+    const label = template.name || 'Watermark';
+    events.broadcast('progress:event', { id: opId, kind: 'overlay-external', done: 0, total, phase: 'applying', label });
+    const tmplSlug = slugify(template.name || 'overlay', 'overlay');
+
+    try {
+      for (let i = 0; i < inputPaths.length; i++) {
+        const src = inputPaths[i];
+        try {
+          if (!fs.existsSync(src)) { failed.push({ src, error: 'file not found' }); continue; }
+          const bytes = await templateRenderer.compose({ inputImage: src, template, context: ctx });
+          // Re-encode to the source format so a JPG photo stays a JPG
+          // (PNG output would balloon photo file sizes).
+          const sharp = require('sharp');
+          let ext = path.extname(src).toLowerCase();
+          if (ext === '.heic' || ext === '.heif' || ext === '') ext = '.jpg'; // HEIC out isn't well supported
+          let pipe = sharp(bytes, { failOn: 'none' });
+          if (ext === '.png')        pipe = pipe.png({ compressionLevel: 9 });
+          else if (ext === '.webp')  pipe = pipe.webp({ quality: 90 });
+          else                       { ext = ext === '.jpeg' ? '.jpeg' : '.jpg'; pipe = pipe.jpeg({ quality: 92, mozjpeg: true }); }
+          const outBytes = await pipe.toBuffer();
+
+          const baseName = slugify(path.basename(src, path.extname(src)) || 'photo', 'photo');
+          let name = `${baseName}-${tmplSlug}${ext}`;
+          let n = 2;
+          while (fs.existsSync(path.join(outputFolder, name)) && n < 9999) { name = `${baseName}-${tmplSlug}-${n}${ext}`; n += 1; }
+          const absOut = path.join(outputFolder, name);
+          await fs.promises.writeFile(absOut, outBytes);
+          done.push({ src, outputFilepath: absOut });
+        } catch (err) {
+          failed.push({ src, error: err.message });
+        }
+        events.broadcast('progress:event', {
+          id: opId, kind: 'overlay-external', done: i + 1, total, phase: 'applying',
+          label: `${label} · ${path.basename(src)}`,
+        });
+      }
+    } finally {
+      events.broadcast('progress:event', { id: opId, complete: true });
+    }
+
+    return { done: done.length, failed, total, outputFolder };
+  });
+
   expose('templates:applyBulk', async ({ templateId, productIds, destination, scope } = {}) => {
     if (!templateId) throw new Error('templateId required');
     if (!Array.isArray(productIds) || productIds.length === 0) {
