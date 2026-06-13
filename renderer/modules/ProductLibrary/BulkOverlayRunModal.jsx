@@ -38,9 +38,12 @@ export function BulkOverlayRunModal({ open, productIds, filters, onClose, onDone
   // choice for "render becomes main, original kept at position 1". The
   // backend accepts both kinds (alias), so any saved presets / older
   // sessions that hold `replaceMain` keep working.
-  const [destination, setDestination] = useState('append'); // 'append' | 'appendAsMain' | 'saveToFolder'
+  const [destination, setDestination] = useState('append'); // 'append' | 'appendAsMain' | 'overwrite' | 'saveToFolder'
   const [folder, setFolder] = useState('');
   const [submitting, setSubmitting] = useState(false);
+  // v0.49.52: which images of each product to overlay. 'main' = just the
+  // main image (original behaviour); 'all' = every image of each product.
+  const [imageScope, setImageScope] = useState('main'); // 'main' | 'all'
 
   // When the user picks "Current filter", we ask the backend for
   // the match count via dryRun so the confirm button shows
@@ -65,6 +68,7 @@ export function BulkOverlayRunModal({ open, productIds, filters, onClose, onDone
       if (rows.length > 0 && !templateId) setTemplateId(rows[0].id);
     }).catch((err) => addToast(err.message, 'error'));
     setScope('selection');
+    setImageScope('main');
     setFilterMatch(null);
   }, [open]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -114,11 +118,11 @@ export function BulkOverlayRunModal({ open, productIds, filters, onClose, onDone
       let res;
       if (scope === 'selection') {
         res = await window.api.templates.applyBulk({
-          templateId, productIds, destination: dest,
+          templateId, productIds, destination: dest, scope: imageScope,
         });
       } else {
         res = await window.api.templates.applyByFilter({
-          templateId, filters: filters ?? {}, destination: dest,
+          templateId, filters: filters ?? {}, destination: dest, scope: imageScope,
         });
       }
       const done = res?.done?.length ?? 0;
@@ -193,6 +197,35 @@ export function BulkOverlayRunModal({ open, productIds, filters, onClose, onDone
           </label>
         </fieldset>
 
+        {/* v0.49.52: which images of each product to overlay. */}
+        <fieldset className="bulk-overlay-run__group">
+          <legend>Apply to which images</legend>
+          <label className="bulk-overlay-run__radio">
+            <input
+              type="radio"
+              name="overlay-image-scope"
+              checked={imageScope === 'main'}
+              onChange={() => setImageScope('main')}
+            />
+            <span>
+              <strong>Main image only</strong>
+              <span className="muted"> — overlay just the product&rsquo;s main image</span>
+            </span>
+          </label>
+          <label className="bulk-overlay-run__radio">
+            <input
+              type="radio"
+              name="overlay-image-scope"
+              checked={imageScope === 'all'}
+              onChange={() => setImageScope('all')}
+            />
+            <span>
+              <strong>All images of each product</strong>
+              <span className="muted"> — overlay every image, not just the main one</span>
+            </span>
+          </label>
+        </fieldset>
+
         <fieldset className="bulk-overlay-run__group">
           <legend>Destination</legend>
           <label className="bulk-overlay-run__radio">
@@ -203,8 +236,8 @@ export function BulkOverlayRunModal({ open, productIds, filters, onClose, onDone
               onChange={() => setDestination('append')}
             />
             <span>
-              <strong>Append as new image</strong>
-              <span className="muted"> — original images untouched, render added to end</span>
+              <strong>Append as new image{imageScope === 'all' ? '(s)' : ''}</strong>
+              <span className="muted"> — original images untouched, {imageScope === 'all' ? 'an overlaid copy added per image' : 'render added to end'}</span>
             </span>
           </label>
           {/* v0.49.44: renamed from "Replace main" because that label
@@ -223,6 +256,21 @@ export function BulkOverlayRunModal({ open, productIds, filters, onClose, onDone
             <span>
               <strong>Append as main image</strong>
               <span className="muted"> — render becomes position 0 (the main), original demotes to position 1 (kept, not deleted)</span>
+            </span>
+          </label>
+          {/* v0.49.52: stamp the overlay onto the image file itself. The
+              natural choice when applying to all images (e.g. watermark
+              every photo). Destructive — no undo. */}
+          <label className="bulk-overlay-run__radio">
+            <input
+              type="radio"
+              name="overlay-dest"
+              checked={destination === 'overwrite'}
+              onChange={() => setDestination('overwrite')}
+            />
+            <span>
+              <strong>Overwrite each image in place</strong>
+              <span className="muted"> — stamp the overlay onto the image file{imageScope === 'all' ? 's' : ''}. Destructive: replaces the original, no undo.</span>
             </span>
           </label>
           <label className="bulk-overlay-run__radio">

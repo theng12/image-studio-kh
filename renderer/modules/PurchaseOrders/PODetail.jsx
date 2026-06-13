@@ -91,7 +91,15 @@ export function PODetail({ poId, onBack }) {
   const addToast = useAppStore((s) => s.addToast);
   const [detail, setDetail] = useState(null);
   const [loading, setLoading] = useState(true);
-  const [products, setProducts] = useState([]);
+  // v0.49.52: read the filter-agnostic `allProducts` slice from the store
+  // (same source AI Studio's product picker uses) instead of a fresh
+  // products:list call. The IPC handler returns [] when the requested
+  // companyId doesn't match the server's active company, which left the
+  // Add-Line picker empty in some states — the store slice is always
+  // populated for the active company, so the picker is reliably filled.
+  const allProducts = useAppStore((s) => s.allProducts);
+  const refreshAllProducts = useAppStore((s) => s.refreshAllProducts);
+  const products = Array.isArray(allProducts) ? allProducts : [];
   const [addingLine, setAddingLine] = useState(false);
   const [addingComponent, setAddingComponent] = useState(false);
   const [editingLine, setEditingLine] = useState(null);
@@ -102,23 +110,20 @@ export function PODetail({ poId, onBack }) {
 
   const header = detail?.header || null;
 
-  // Load the detail + a product list (for the Add Line picker). The
-  // product list is per-company, and the PO header carries the company.
+  // Load the PO detail. Products for the Add-Line picker come from the
+  // store's `allProducts` slice; make sure it's populated (it normally is
+  // after company selection, but refresh defensively in case this module
+  // mounted before the catalog loaded).
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
+    if (!products.length) refreshAllProducts?.();
     window.api.purchaseOrders.getDetail(poId)
-      .then(async (d) => {
-        if (cancelled) return;
-        setDetail(d);
-        if (d?.header?.companyId) {
-          const list = await window.api.products.list(d.header.companyId, {}).catch(() => []);
-          if (!cancelled) setProducts(Array.isArray(list) ? list : []);
-        }
-      })
+      .then((d) => { if (!cancelled) setDetail(d); })
       .catch((err) => { if (!cancelled) addToast(`Failed to load PO: ${err.message}`, 'error'); })
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [poId, addToast]);
 
   function applySnapshot(snap) {
@@ -763,13 +768,16 @@ function LineModal({ mode, currency, line, products, onCancel, onSave }) {
               <label className="field field--full">
                 <span className="field__label">Product *</span>
                 <Select value={productId} onChange={(e) => setProductId(e.target.value)}>
-                  <option value="">Choose…</option>
+                  <option value="">{products.length ? 'Choose…' : 'No products yet — add some in the Library first'}</option>
                   {products.map((p) => (
                     <option key={p.id} value={p.id}>
-                      {p.sku} — {p.name}
+                      {p.sku}{p.name ? ` — ${p.name}` : ''}
                     </option>
                   ))}
                 </Select>
+                {products.length === 0 && (
+                  <span className="field__hint">This PO’s company has no products. Create products in the Product Library, then add them here.</span>
+                )}
               </label>
             )}
             <label className="field">

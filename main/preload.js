@@ -394,12 +394,12 @@ contextBridge.exposeInMainWorld('api', {
     listRuns:  (companyId, limit) => invoke('templates:listRuns', { companyId, limit }),
     // v0.26.15: Overlay Studio Phase 3 — apply templates to
     // products and route the rendered PNG per destination.
-    applyToProduct: ({ templateId, productId, destination } = {}) =>
-      invoke('templates:applyToProduct', { templateId, productId, destination }),
-    applyBulk: ({ templateId, productIds, destination } = {}) =>
-      invoke('templates:applyBulk', { templateId, productIds, destination }),
-    applyByFilter: ({ templateId, filters, destination, dryRun } = {}) =>
-      invoke('templates:applyByFilter', { templateId, filters, destination, dryRun }),
+    applyToProduct: ({ templateId, productId, destination, scope } = {}) =>
+      invoke('templates:applyToProduct', { templateId, productId, destination, scope }),
+    applyBulk: ({ templateId, productIds, destination, scope } = {}) =>
+      invoke('templates:applyBulk', { templateId, productIds, destination, scope }),
+    applyByFilter: ({ templateId, filters, destination, dryRun, scope } = {}) =>
+      invoke('templates:applyByFilter', { templateId, filters, destination, dryRun, scope }),
   },
   ai: {
     listModels:    ()                                 => invoke('ai:listModels'),

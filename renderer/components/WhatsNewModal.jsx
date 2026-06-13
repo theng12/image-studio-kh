@@ -2,6 +2,17 @@ import { Modal } from './ui.jsx';
 
 const CHANGELOG = [
   {
+    version: '0.49.52',
+    date: '2026-06-10',
+    items: [
+      'FIX — **Purchase Order line items wouldn’t let you pick a product.** The Add-Line picker pulled products via a call that returns nothing when the requested company doesn’t match the server’s active company, so the dropdown came up empty. It now reads from the same always-populated product list the AI Studio picker uses, and shows a clear hint ("add products in the Library first") if a company genuinely has none.',
+      'NEW — **Overlay Studio can apply to all images, not just the main one.** When you apply a template (from a product’s Process → Overlay Studio, or bulk across selected products), there’s a new "Apply to which images" choice: **Main image only** (as before) or **All images of each product**. So a watermark / frame / badge can go on every photo of a product in one go, across as many products as you’ve selected.',
+      'NEW — overlay destination **"Overwrite each image in place"** — stamps the overlay directly onto the image file(s) instead of appending a copy. Ideal with "All images" for branding a whole product set. It’s destructive (replaces the original, no undo), so it’s labelled clearly; the non-destructive Append and Save-to-folder options still apply per image too.',
+      'Internal — overlay apply refactored into one shared per-product helper (`applyOverlayToProductImages`) used by both the single-product and bulk/by-filter paths; honours `scope: \'main\'|\'all\'` and the new `overwrite` destination (in-place re-encode + atomic replace + content-hash refresh, same safe pattern as flip/crop). Cap + dedup checks preserved per image.',
+      'Verified: tests pass (161 total). Build clean.',
+    ],
+  },
+  {
     version: '0.49.51',
     date: '2026-06-09',
     items: [

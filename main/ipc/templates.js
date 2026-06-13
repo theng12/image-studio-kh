@@ -27,6 +27,115 @@ const imageTemplateRuns = require('../db/imageTemplateRuns');
 const templateRenderer = require('../templateRenderer');
 const { getDataDir } = require('../db');
 
+/* ─── v0.49.52: multi-image overlay apply helpers ───────────────────
+ * Overlay apply used to hit only the main image. These let a caller
+ * target ALL of a product's images (scope: 'all'), and add an in-place
+ * 'overwrite' destination that stamps the overlay onto each image file. */
+
+/** Absolute path to an image's base file (processed version wins over raw). */
+function imageBaseAbs(image) {
+  const rel = (image.isProcessed && image.processedFilepath) ? image.processedFilepath : image.filepath;
+  return rel.startsWith('processed/') || rel.startsWith('ai-gallery/') || rel.startsWith('overlays/')
+    ? path.join(getDataDir(), rel)
+    : path.join(getDataDir(), 'assets', rel);
+}
+
+/** The images to apply to. scope 'all' → every image with a file on disk;
+ *  otherwise just the main (processed-preferred) image, as before. */
+function pickTargetImages(imageList, scope) {
+  if (scope === 'all') return imageList.filter((im) => fs.existsSync(imageBaseAbs(im)));
+  const main = imageList.find((im) => im.isProcessed && im.processedFilepath) || imageList[0];
+  return main ? [main] : [];
+}
+
+/** Stamp composed bytes onto an image's RAW file in place (re-encoded to
+ *  the source format), atomic-rename, refresh content_hash. Mirrors the
+ *  flipSource overwrite pattern. Returns the updated row. */
+async function overwriteImageInPlace(productId, image, bytes) {
+  const sharp = require('sharp');
+  const crypto = require('node:crypto');
+  const absSrc = path.join(getDataDir(), 'assets', image.filepath);
+  const ext = path.extname(absSrc).toLowerCase();
+  const tmpAbs = path.join(path.dirname(absSrc), `__overlay-${crypto.randomUUID()}${ext}`);
+  let pipe = sharp(bytes, { failOn: 'none' });
+  if (ext === '.png')        pipe = pipe.png({ compressionLevel: 9 });
+  else if (ext === '.webp')  pipe = pipe.webp({ quality: 90 });
+  else                       pipe = pipe.jpeg({ quality: 92, mozjpeg: true });
+  try {
+    await pipe.toFile(tmpAbs);
+    await fs.promises.rename(tmpAbs, absSrc);
+  } catch (err) {
+    try { if (fs.existsSync(tmpAbs)) await fs.promises.unlink(tmpAbs); } catch (_) {}
+    throw err;
+  }
+  const buf = await fs.promises.readFile(absSrc);
+  const newHash = crypto.createHash('sha1').update(buf).digest('hex');
+  return productImages.setContentHash(productId, image.filepath, newHash);
+}
+
+/**
+ * Apply a template to one product's images and route per destination.
+ * Single source of truth for both templates:applyToProduct and the bulk
+ * loop. Returns { outputs: [...], skipped?: 'reason' }.
+ *
+ *   scope: 'main' (default) | 'all'
+ *   destination.kind: 'append' | 'appendAsMain' | 'replaceMain'
+ *                   | 'overwrite' | 'saveToFolder'
+ *
+ * promote-to-main only happens when exactly one image is targeted
+ * (which image would become "main" is ambiguous for a multi-image run).
+ */
+async function applyOverlayToProductImages({ template, product, scope, destination }) {
+  const imageManager = require('../imageManager');
+  const { slugify } = require('../util/slug');
+  const imageList = productImages.listByProduct(product.id);
+  const targets = pickTargetImages(imageList, scope);
+  if (targets.length === 0) return { outputs: [], skipped: 'no images' };
+
+  const ctx = buildTemplateContext(product);
+  const outputs = [];
+  const promotesToMain = (destination.kind === 'replaceMain' || destination.kind === 'appendAsMain') && targets.length === 1;
+  let appendedCount = 0;
+
+  for (const img of targets) {
+    const baseAbs = imageBaseAbs(img);
+    if (!fs.existsSync(baseAbs)) continue;
+    const bytes = await templateRenderer.compose({ inputImage: baseAbs, template, context: ctx });
+
+    if (destination.kind === 'overwrite') {
+      const updated = await overwriteImageInPlace(product.id, img, bytes);
+      outputs.push({ outputFilepath: img.filepath, image: updated, overwritten: true });
+    } else if (destination.kind === 'saveToFolder') {
+      const folder = destination.folder;
+      await fs.promises.mkdir(folder, { recursive: true });
+      const base = `${slugify(product.sku || 'product', 'product')}-${slugify(template.name || 'overlay', 'overlay')}`;
+      let name = `${base}.png`;
+      let n = 2;
+      while (fs.existsSync(path.join(folder, name)) && n < 9999) { name = `${base}-${n}.png`; n += 1; }
+      const absOut = path.join(folder, name);
+      await fs.promises.writeFile(absOut, bytes);
+      outputs.push({ outputFilepath: absOut, savedTo: absOut });
+    } else {
+      // append / appendAsMain / replaceMain → add an overlaid copy.
+      if (imageList.length + appendedCount >= imageManager.MAX_IMAGES_PER_PRODUCT) {
+        return { outputs, skipped: 'image cap reached' };
+      }
+      const { image, skipped } = await productImages.addFromBytes(product.id, bytes, '.png', {
+        originalFilepath: `overlay:${template.id}`,
+      });
+      if (!skipped) appendedCount += 1;
+      if (promotesToMain && image) productImages.setMain(product.id, image.filepath);
+      outputs.push({ outputFilepath: image.filepath, image, skipped: !!skipped });
+    }
+  }
+
+  if (destination.kind !== 'saveToFolder' && outputs.length > 0) {
+    products.recomputeProcessStatus(product.id);
+    products.touchUpdated(product.id);
+  }
+  return { outputs };
+}
+
 function register({ expose, emitCatalogChange }) {
   expose('templates:list',      (opts) => imageTemplates.list(opts ?? {}));
   expose('templates:get',       (id) => imageTemplates.get(id));
@@ -143,10 +252,13 @@ function register({ expose, emitCatalogChange }) {
    *   - `savedTo` is the absolute disk path for saveToFolder
    *   - `outputFilepath` is the user-friendly path for the toast
    */
-  expose('templates:applyToProduct', async ({ templateId, productId, destination } = {}) => {
+  expose('templates:applyToProduct', async ({ templateId, productId, destination, scope } = {}) => {
     if (!templateId) throw new Error('templateId required');
     if (!productId)  throw new Error('productId required');
     if (!destination || typeof destination !== 'object') throw new Error('destination required');
+    if (destination.kind === 'saveToFolder' && !destination.folder?.trim()) {
+      throw new Error('saveToFolder requires a folder path');
+    }
 
     const template = imageTemplates.get(templateId);
     if (!template) throw new Error('Template not found');
@@ -156,70 +268,21 @@ function register({ expose, emitCatalogChange }) {
       throw new Error('Cross-company apply blocked');
     }
 
-    // Pick base image (same rule as renderPreview): processed wins
-    // over raw. Skip if no main image exists at all.
-    const images = productImages.listByProduct(product.id);
-    const main   = images.find((i) => i.isProcessed && i.processedFilepath) || images[0];
-    if (!main) throw new Error('Product has no images to overlay');
-    const baseRel = (main.isProcessed && main.processedFilepath) ? main.processedFilepath : main.filepath;
-    const baseAbs = baseRel.startsWith('processed/') || baseRel.startsWith('ai-gallery/') || baseRel.startsWith('overlays/')
-      ? path.join(getDataDir(), baseRel)
-      : path.join(getDataDir(), 'assets', baseRel);
-    if (!fs.existsSync(baseAbs)) throw new Error('Base image missing on disk: ' + baseRel);
-
-    const ctx = buildTemplateContext(product);
-    const bytes = await templateRenderer.compose({ inputImage: baseAbs, template, context: ctx });
-
-    if (destination.kind === 'append' || destination.kind === 'replaceMain' || destination.kind === 'appendAsMain') {
-      // Cap check — same limit as importForProduct.
-      const imageManager = require('../imageManager');
-      if (images.length >= imageManager.MAX_IMAGES_PER_PRODUCT) {
-        throw new Error(`Image cap reached (${imageManager.MAX_IMAGES_PER_PRODUCT})`);
-      }
-      const { image, skipped } = await productImages.addFromBytes(product.id, bytes, '.png', {
-        originalFilepath: `overlay:${template.id}`, // marker so History can show the source
-      });
-      if (skipped) {
-        // dedup hit — the bytes matched an existing image on this
-        // product. Surface this as a soft success rather than an
-        // error: the user's intent was satisfied, the image is
-        // already there, we just didn't insert a new row.
-        return { outputFilepath: image.filepath, image, skipped: true };
-      }
-      // v0.49.44: both the legacy `replaceMain` and the new
-      // `appendAsMain` promote the rendered image to position 0.
-      // Original main demotes to position 1 — nothing is deleted.
-      const promotesToMain = destination.kind === 'replaceMain' || destination.kind === 'appendAsMain';
-      if (promotesToMain) {
-        productImages.setMain(product.id, image.filepath);
-      }
-      products.recomputeProcessStatus(product.id);
-      products.touchUpdated(product.id);
-      emitCatalogChange('images', promotesToMain ? 'setMain' : 'add', product.id);
-
-      return { outputFilepath: image.filepath, image };
+    // v0.49.52: scope 'all' overlays every image; default 'main' keeps
+    // the original single-image behaviour. The shared helper routes per
+    // destination (append / appendAsMain / overwrite / saveToFolder).
+    const { outputs, skipped } = await applyOverlayToProductImages({
+      template, product, scope: scope === 'all' ? 'all' : 'main', destination,
+    });
+    if (skipped && outputs.length === 0) {
+      throw new Error(skipped === 'no images' ? 'Product has no images to overlay' : skipped);
     }
-
-    if (destination.kind === 'saveToFolder') {
-      if (typeof destination.folder !== 'string' || !destination.folder.trim()) {
-        throw new Error('saveToFolder requires a folder path');
-      }
-      const folder = destination.folder;
-      await fs.promises.mkdir(folder, { recursive: true });
-      const { slugify } = require('../util/slug');
-      const base = `${slugify(product.sku || 'product', 'product')}-${slugify(template.name || 'overlay', 'overlay')}`;
-      let name = `${base}.png`;
-      let n = 2;
-      while (fs.existsSync(path.join(folder, name)) && n < 9999) {
-        name = `${base}-${n}.png`;
-        n += 1;
-      }
-      const absOut = path.join(folder, name);
-      await fs.promises.writeFile(absOut, bytes);
-      return { outputFilepath: absOut, savedTo: absOut };
+    if (destination.kind !== 'saveToFolder' && outputs.length > 0) {
+      const promoted = outputs.some((o) => o.image && (destination.kind === 'appendAsMain' || destination.kind === 'replaceMain'));
+      emitCatalogChange('images', promoted ? 'setMain' : (destination.kind === 'overwrite' ? 'flip' : 'add'), product.id);
     }
-
-    throw new Error(`Unknown destination kind: ${destination.kind}`);
+    const first = outputs[0] || {};
+    return { ...first, count: outputs.length, outputs };
   });
 
   /**
@@ -231,7 +294,7 @@ function register({ expose, emitCatalogChange }) {
    * Records one row in image_template_runs per BATCH (not per
    * product) so the History panel doesn't drown in noise.
    */
-  expose('templates:applyBulk', async ({ templateId, productIds, destination } = {}) => {
+  expose('templates:applyBulk', async ({ templateId, productIds, destination, scope } = {}) => {
     if (!templateId) throw new Error('templateId required');
     if (!Array.isArray(productIds) || productIds.length === 0) {
       throw new Error('productIds required');
@@ -245,7 +308,7 @@ function register({ expose, emitCatalogChange }) {
     }
     const companyId = companies.getActiveId();
     return await applyBulkInternal({
-      templateId, productIds, destination, companyId, emitCatalogChange,
+      templateId, productIds, destination, companyId, emitCatalogChange, scope,
     });
   });
 
@@ -256,7 +319,7 @@ function register({ expose, emitCatalogChange }) {
    * so the confirmation modal can show "this will hit 47 products
    * including BR-001, BR-002, BR-003…" before the user commits.
    */
-  expose('templates:applyByFilter', async ({ templateId, filters, destination, dryRun } = {}) => {
+  expose('templates:applyByFilter', async ({ templateId, filters, destination, dryRun, scope } = {}) => {
     if (!templateId) throw new Error('templateId required');
     const companyId = companies.getActiveId();
     if (!companyId) throw new Error('No active company');
@@ -286,7 +349,7 @@ function register({ expose, emitCatalogChange }) {
     // loop in a helper.)
     return await applyBulkInternal({
       templateId, productIds, destination, companyId,
-      emitCatalogChange,
+      emitCatalogChange, scope,
     });
   });
 }
@@ -301,10 +364,8 @@ function register({ expose, emitCatalogChange }) {
  * `products`, `productImages`, `templateRenderer`, `imageTemplateRuns`,
  * `getDataDir`, etc.
  */
-async function applyBulkInternal({ templateId, productIds, destination, companyId, emitCatalogChange }) {
+async function applyBulkInternal({ templateId, productIds, destination, companyId, emitCatalogChange, scope }) {
   const events = require('../events');
-  const imageManager = require('../imageManager');
-  const { slugify } = require('../util/slug');
 
   const done = [];
   const failed = [];
@@ -329,65 +390,23 @@ async function applyBulkInternal({ templateId, productIds, destination, companyI
         const product = products.get(pid);
         if (!product) { skipped.push({ productId: pid, reason: 'not found' }); continue; }
         if (product.companyId !== companyId) { skipped.push({ productId: pid, sku: product.sku, reason: 'cross-company' }); continue; }
-
-        const imageList = productImages.listByProduct(pid);
-        const main = imageList.find((im) => im.isProcessed && im.processedFilepath) || imageList[0];
-        if (!main) { skipped.push({ productId: pid, sku: product.sku, reason: 'no main image' }); continue; }
-
-        const baseRel = (main.isProcessed && main.processedFilepath) ? main.processedFilepath : main.filepath;
-        const baseAbs = baseRel.startsWith('processed/') || baseRel.startsWith('ai-gallery/') || baseRel.startsWith('overlays/')
-          ? path.join(getDataDir(), baseRel)
-          : path.join(getDataDir(), 'assets', baseRel);
-        if (!fs.existsSync(baseAbs)) { skipped.push({ productId: pid, sku: product.sku, reason: 'base file missing' }); continue; }
-
         if (!template) throw new Error('Template disappeared mid-batch');
 
-        const ctx = buildTemplateContext(product);
-        const bytes = await templateRenderer.compose({ inputImage: baseAbs, template, context: ctx });
-
-        if (destination.kind === 'append' || destination.kind === 'replaceMain' || destination.kind === 'appendAsMain') {
-          if (imageList.length >= imageManager.MAX_IMAGES_PER_PRODUCT) {
-            skipped.push({ productId: pid, sku: product.sku, reason: 'image cap reached' });
-            continue;
-          }
-          const { image } = await productImages.addFromBytes(pid, bytes, '.png', {
-            originalFilepath: `overlay:${template.id}`,
-          });
-          // v0.49.45 HOTFIX — the bulk path was still only checking
-          // `replaceMain` so the new `appendAsMain` (v0.49.44) silently
-          // skipped the setMain call. Result: user picks "Append as
-          // main image" in the bulk modal, expects position 0, gets
-          // position N (end of list). The single-product path was
-          // fixed in v0.49.44 but the bulk branch uses `pid` instead
-          // of `product.id` so the `replace_all` edit missed it.
-          // Same `promotesToMain` consolidation now used in both paths.
-          const promotesToMain = destination.kind === 'replaceMain' || destination.kind === 'appendAsMain';
-          if (promotesToMain) productImages.setMain(pid, image.filepath);
-          products.recomputeProcessStatus(pid);
-          products.touchUpdated(pid);
-          done.push({ productId: pid, sku: product.sku, outputFilepath: image.filepath });
-          // v0.26.18: per-product catalog event so any side-panel /
-          // editor watching THIS productId can refresh its image
-          // list the instant the new image lands — that's what
-          // ProductForm's catalog-event subscription listens for,
-          // matching evt.id === activeProductId. Without this the
-          // bulk runner was emitting nothing per-row and the side
-          // panel only refreshed when the user clicked off + back.
-          emitCatalogChange('images', promotesToMain ? 'setMain' : 'add', pid);
-        } else if (destination.kind === 'saveToFolder') {
-          await fs.promises.mkdir(destination.folder, { recursive: true });
-          const base = `${slugify(product.sku || 'product', 'product')}-${slugify(template.name || 'overlay', 'overlay')}`;
-          let name = `${base}.png`;
-          let n = 2;
-          while (fs.existsSync(path.join(destination.folder, name)) && n < 9999) {
-            name = `${base}-${n}.png`;
-            n += 1;
-          }
-          const absOut = path.join(destination.folder, name);
-          await fs.promises.writeFile(absOut, bytes);
-          done.push({ productId: pid, sku: product.sku, outputFilepath: absOut });
-        } else {
-          throw new Error(`Unknown destination kind: ${destination.kind}`);
+        // v0.49.52: shared per-product apply — honours scope ('all' →
+        // every image) + the new 'overwrite' destination.
+        const { outputs, skipped: reason } = await applyOverlayToProductImages({
+          template, product, scope: scope === 'all' ? 'all' : 'main', destination,
+        });
+        if (reason && outputs.length === 0) {
+          skipped.push({ productId: pid, sku: product.sku, reason });
+          continue;
+        }
+        for (const o of outputs) {
+          done.push({ productId: pid, sku: product.sku, outputFilepath: o.outputFilepath });
+        }
+        if (destination.kind !== 'saveToFolder' && outputs.length > 0) {
+          const promoted = (destination.kind === 'replaceMain' || destination.kind === 'appendAsMain') && outputs.some((o) => o.image);
+          emitCatalogChange('images', promoted ? 'setMain' : (destination.kind === 'overwrite' ? 'flip' : 'add'), pid);
         }
       } catch (err) {
         failed.push({ productId: pid, error: err.message });
