@@ -337,26 +337,29 @@ function register({ expose, emitCatalogChange }) {
       for (let i = 0; i < inputPaths.length; i++) {
         const src = inputPaths[i];
         try {
-          if (!fs.existsSync(src)) { failed.push({ src, error: 'file not found' }); continue; }
-          const bytes = await templateRenderer.compose({ inputImage: src, template, context: ctx });
-          // Re-encode to the source format so a JPG photo stays a JPG
-          // (PNG output would balloon photo file sizes).
-          const sharp = require('sharp');
-          let ext = path.extname(src).toLowerCase();
-          if (ext === '.heic' || ext === '.heif' || ext === '') ext = '.jpg'; // HEIC out isn't well supported
-          let pipe = sharp(bytes, { failOn: 'none' });
-          if (ext === '.png')        pipe = pipe.png({ compressionLevel: 9 });
-          else if (ext === '.webp')  pipe = pipe.webp({ quality: 90 });
-          else                       { ext = ext === '.jpeg' ? '.jpeg' : '.jpg'; pipe = pipe.jpeg({ quality: 92, mozjpeg: true }); }
-          const outBytes = await pipe.toBuffer();
+          if (!fs.existsSync(src)) {
+            failed.push({ src, error: 'file not found' });
+          } else {
+            const bytes = await templateRenderer.compose({ inputImage: src, template, context: ctx });
+            // Re-encode to the source format so a JPG photo stays a JPG
+            // (PNG output would balloon photo file sizes).
+            const sharp = require('sharp');
+            let ext = path.extname(src).toLowerCase();
+            if (ext === '.heic' || ext === '.heif' || ext === '') ext = '.jpg'; // HEIC out isn't well supported
+            let pipe = sharp(bytes, { failOn: 'none' });
+            if (ext === '.png')        pipe = pipe.png({ compressionLevel: 9 });
+            else if (ext === '.webp')  pipe = pipe.webp({ quality: 90 });
+            else                       { ext = ext === '.jpeg' ? '.jpeg' : '.jpg'; pipe = pipe.jpeg({ quality: 92, mozjpeg: true }); }
+            const outBytes = await pipe.toBuffer();
 
-          const baseName = slugify(path.basename(src, path.extname(src)) || 'photo', 'photo');
-          let name = `${baseName}-${tmplSlug}${ext}`;
-          let n = 2;
-          while (fs.existsSync(path.join(outputFolder, name)) && n < 9999) { name = `${baseName}-${tmplSlug}-${n}${ext}`; n += 1; }
-          const absOut = path.join(outputFolder, name);
-          await fs.promises.writeFile(absOut, outBytes);
-          done.push({ src, outputFilepath: absOut });
+            const baseName = slugify(path.basename(src, path.extname(src)) || 'photo', 'photo');
+            let name = `${baseName}-${tmplSlug}${ext}`;
+            let n = 2;
+            while (fs.existsSync(path.join(outputFolder, name)) && n < 9999) { name = `${baseName}-${tmplSlug}-${n}${ext}`; n += 1; }
+            const absOut = path.join(outputFolder, name);
+            await fs.promises.writeFile(absOut, outBytes);
+            done.push({ src, outputFilepath: absOut });
+          }
         } catch (err) {
           failed.push({ src, error: err.message });
         }
